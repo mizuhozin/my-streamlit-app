@@ -1,4 +1,6 @@
 streamlit
 pandas
-matplotlib
-# ※ その他使っているライブラリ（requests, numpy など）を1行ずつ記述
+numpy
+plotly
+yfinance
+requests
