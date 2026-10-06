@@ -1,6 +1,6 @@
 import os
 import glob
-from datetime import datetime, time
+from datetime import datetime, time, timezone, timedelta
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -20,6 +20,9 @@ st.set_page_config(
 st.title("📈 株式スクリーナー & よすが式YTTナビ")
 st.caption("ダウ理論トレンド判定、YTT風自動リワード・リスク算出、分足/日足マルチ時間軸チャート、自動更新ナビ")
 
+# 日本時間 (JST: UTC+9) の定義
+JST = timezone(timedelta(hours=9))
+
 # ---------------------------------------------------------
 # セッション状態の初期化
 # ---------------------------------------------------------
@@ -36,16 +39,16 @@ if "watchlist" not in st.session_state:
     ]
 
 # ---------------------------------------------------------
-# 取引時間判定関数（東証: 平日 9:00〜15:30）
+# 日本時間ベースの取引時間判定関数（東証: 平日 9:00〜15:30）
 # ---------------------------------------------------------
 def is_market_open():
-    now = datetime.now()
+    now_jst = datetime.now(JST)
     # 土日(5, 6)は取引時間外
-    if now.weekday() >= 5:
+    if now_jst.weekday() >= 5:
         return False
     market_start = time(9, 0)
     market_end = time(15, 30)
-    return market_start <= now.time() <= market_end
+    return market_start <= now_jst.time() <= market_end
 
 # ---------------------------------------------------------
 # サイドバー：ナビゲーション & 自動更新設定
@@ -69,17 +72,17 @@ st.sidebar.header("🔄 リアルタイム自動更新設定")
 auto_refresh_enabled = st.sidebar.toggle("自動更新を有効化", value=True)
 refresh_minutes = st.sidebar.slider("更新間隔 (分)", min_value=5, max_value=60, value=5, step=1)
 
-# 東証の開帳チェック
+# 日本時間での東証開帳チェック
 market_active = is_market_open()
 
 # サイドバーへのステータス明示
 if not auto_refresh_enabled:
     st.sidebar.info("⏸️ **自動更新: 手動オフ**")
 elif not market_active:
-    st.sidebar.warning("💤 **自動更新: 取引時間外 (自動停止中)**\n※平日 9:00〜15:30 のみ稼働")
+    st.sidebar.warning("💤 **自動更新: 取引時間外 (自動停止中)**\n※平日 9:00〜15:30 (JST) のみ稼働")
 else:
     st.sidebar.success(f"🟢 **自動更新: 稼働中** ({refresh_minutes}分おき)")
-    # 条件を満たした場合のみ autorefresh を実行（ミリ秒単位）
+    # 条件を満たした場合のみ autorefresh を実行
     st_autorefresh(interval=refresh_minutes * 60 * 1000, key="ytt_data_refresh")
 
 st.sidebar.markdown("---")
@@ -242,7 +245,6 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
     with col_opt3:
         rr_ratio = st.selectbox("目標リスクリワード比", [1.0, 1.5, 2.0, 2.5], index=1)
     
-    # yfinance 用のパラメータマッピング
     tf_map = {
         "5分足": "5m", "15分足": "15m", "1時間足": "60m",
         "日足 (1日)": "1d", "週足 (1週間)": "1wk"
@@ -255,7 +257,6 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
     interval_val = tf_map[timeframe_option]
     period_val = p_map[period_option]
 
-    # 分足データ取得制限の自動補正（yfinance制限対策）
     if interval_val in ["5m", "15m"] and period_val in ["3mo", "6mo", "1y"]:
         period_val = "1mo"
         st.warning("⚠️ 分足データは直近1ヶ月間（1mo）まで自動調整して取得します。")
@@ -275,7 +276,6 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     
                     company_name = info.get("longName", info.get("shortName", selected_ticker))
                     
-                    # --- YTT風 ダウ理論レベル自動算出 ---
                     recent_df = hist.tail(20)
                     recent_low = recent_df["Low"].min()
                     recent_high = recent_df["High"].max()
@@ -288,7 +288,6 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     sma50 = hist["Close"].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else sma20
                     trend_status = "上昇トレンド (買い目線🟢)" if latest_close > sma20 > sma50 else ("下降トレンド (売り/様子見🔴)" if latest_close < sma20 else "レンジ・転換模索中🟡")
 
-                    # 基本情報カード
                     c1, c2, c3 = st.columns(3)
                     with c1:
                         st.metric("選択中の銘柄", company_name)
@@ -297,7 +296,6 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     with c3:
                         st.metric("ダウ理論・トレンド判定", trend_status)
 
-                    # --- YTT風自動ライン提示カード ---
                     st.markdown("#### ⚡ YTT風・自動売買ラインナビ (ダウ理論ベース)")
                     ytt1, ytt2, ytt3, ytt4 = st.columns(4)
                     with ytt1:
@@ -309,7 +307,6 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     with ytt4:
                         st.metric("想定リスクリワード", f"1 : {rr_ratio}")
 
-                    # チャート描画
                     hist["SMA20"] = hist["Close"].rolling(window=20).mean()
                     hist["SMA50"] = hist["Close"].rolling(window=50).mean()
                     
@@ -321,7 +318,6 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     fig_stock.add_trace(go.Scatter(x=hist.index, y=hist["SMA20"], mode='lines', name='20本移動平均', line=dict(color='orange', width=1.5)))
                     fig_stock.add_trace(go.Scatter(x=hist.index, y=hist["SMA50"], mode='lines', name='50本移動平均', line=dict(color='blue', width=1.5)))
                     
-                    # YTTラインオーバーレイ
                     fig_stock.add_hline(y=take_profit, line_dash="dash", line_color="green", annotation_text=f"利確目標 (TP): ¥{take_profit:,.1f}")
                     fig_stock.add_hline(y=latest_close, line_dash="dot", line_color="blue", annotation_text=f"現在地/エントリー: ¥{latest_close:,.1f}")
                     fig_stock.add_hline(y=stop_loss, line_dash="dash", line_color="red", annotation_text=f"損切り (SL): ¥{stop_loss:,.1f}")
