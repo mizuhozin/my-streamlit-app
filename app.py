@@ -43,7 +43,6 @@ if "watchlist" not in st.session_state:
 # ---------------------------------------------------------
 def is_market_open():
     now_jst = datetime.now(JST)
-    # 土日(5, 6)は取引時間外
     if now_jst.weekday() >= 5:
         return False
     market_start = time(9, 0)
@@ -68,22 +67,47 @@ menu_selection = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.header("🔄 リアルタイム自動更新設定")
 
-# ユーザーによる手動ON/OFFトグル
 auto_refresh_enabled = st.sidebar.toggle("自動更新を有効化", value=True)
 refresh_minutes = st.sidebar.slider("更新間隔 (分)", min_value=5, max_value=60, value=5, step=1)
 
-# 日本時間での東証開帳チェック
 market_active = is_market_open()
 
-# サイドバーへのステータス明示
 if not auto_refresh_enabled:
     st.sidebar.info("⏸️ **自動更新: 手動オフ**")
 elif not market_active:
     st.sidebar.warning("💤 **自動更新: 取引時間外 (自動停止中)**\n※平日 9:00〜15:30 (JST) のみ稼働")
 else:
     st.sidebar.success(f"🟢 **自動更新: 稼働中** ({refresh_minutes}分おき)")
-    # 条件を満たした場合のみ autorefresh を実行
     st_autorefresh(interval=refresh_minutes * 60 * 1000, key="ytt_data_refresh")
+
+# ---------------------------------------------------------
+# サイドバー：🧮 資金・ポジションサイズ計算 (新規追加: 楽天ミニ株対応)
+# ---------------------------------------------------------
+st.sidebar.markdown("---")
+st.sidebar.header("🧮 資金・ポジションサイズ計算")
+with st.sidebar.expander("💡 単元未満株 (楽天ミニ株) 試算", expanded=True):
+    calc_price = st.number_input("想定買付株価 (円)", min_value=1.0, value=2500.0, step=10.0, format="%.1f")
+    calc_qty = st.number_input("購入株数 (1株〜)", min_value=1, value=10, step=1)
+    
+    calc_leverage_option = st.selectbox(
+        "レバレッジ (取引区分)",
+        ["1:1 (現物取引)", "1:2 (信用2倍)", "1:3.3 (信用最大)"],
+        index=0
+    )
+    lev_val = 1.0 if "1:1" in calc_leverage_option else (2.0 if "1:2" in calc_leverage_option else 3.3)
+    
+    # 計算処理
+    total_value = calc_price * calc_qty
+    required_margin = total_value / lev_val
+    
+    # リスク率 2% ルールを仮定した推奨口座資金算出 (SL 4%幅と仮定した場合)
+    est_risk_pct = 0.04
+    est_loss = total_value * est_risk_pct
+    rec_capital = est_loss / 0.02
+
+    st.markdown(f"**概算購入代金:** `¥{total_value:,.0f}`")
+    st.markdown(f"**必要購入資金 (証拠金):** `¥{required_margin:,.0f}`")
+    st.caption(f"※許容リスク2%/SL4%計算での推奨口座資金: **¥{rec_capital:,.0f}**")
 
 st.sidebar.markdown("---")
 st.sidebar.header("📁 データ選択")
@@ -138,14 +162,16 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
     with col_rule1:
         st.info("""
         **📈 ダウ理論に基づくトレンド判定**
-        * **上昇トレンド:** 高値と安値がともに切り上がっている状態。押し目買いのチャンス。
-        * **ダウ目線崩れ:** 直近の「押し安値」を下抜けた場合、トレンド転換または調整入りとみなして撤退（損切り）を検討します。
+        * **上昇トレンド (買い目線):** 高値と安値が切り上がっている状態。押し目買いを推奨。
+        * **下降トレンド (売り目線):** 高値と安値が切り下がっている状態。戻り売り（ショート）を推奨。
+        * **トレンド転換:** 直近の高値/安値を破られた場合、ポジションの解消・手仕舞いを検討します。
         """)
     with col_rule2:
         st.success("""
-        **🎯 YTT風・自動SL/TP設定機能**
-        * **損切りライン (SL):** ダウ理論における「直近の押し安値」の少し下に自動設定されます。
-        * **利確ライン (TP):** リスクリワード比（例: 1:1.5）に合わせて目標価格を自動逆算します。
+        **🎯 YTT風・自動SL/TP（売買両対応）設定機能**
+        * **買い（ロング）の場合:** SLは「直近安値」、TPは上方目標価格。
+        * **売り（ショート）の場合:** SLは「直近高値」、TPは下方目標価格。
+        * **目標利確 (TP):** 設定したリスクリワード比（例: 1:1.5）に応じて全自動算出。
         """)
 
 # =========================================================
@@ -206,10 +232,10 @@ elif menu_selection == "⭐ マイ・ウォッチリスト":
         st.info("現在ウォッチリストに登録されている銘柄はありません。")
 
 # =========================================================
-# 画面3: 🔍 個別銘柄 詳細分析 & YTTナビ (マルチ時間軸対応)
+# 画面3: 🔍 個別銘柄 詳細分析 & YTTナビ (パターンA: 順張り両対応)
 # =========================================================
 elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
-    st.subheader("🔍 個別銘柄 詳細分析 & YTT風自動売買ナビ")
+    st.subheader("🔍 個別銘柄 詳細分析 & YTT風自動売売ナビ")
     
     combined_options = []
     if st.session_state.watchlist:
@@ -232,7 +258,7 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
     col_opt1, col_opt2, col_opt3 = st.columns([2, 2, 1])
     with col_opt1:
         timeframe_option = st.selectbox(
-            "⏱️️ 時間足 (ローソク足の間隔)",
+            "⏱ 時間足 (ローソク足の間隔)",
             ["日足 (1日)", "5分足", "15分足", "1時間足", "週足 (1週間)"],
             index=0
         )
@@ -280,13 +306,42 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     recent_low = recent_df["Low"].min()
                     recent_high = recent_df["High"].max()
                     
-                    stop_loss = recent_low * 0.995
-                    risk = latest_close - stop_loss
-                    take_profit = latest_close + (risk * rr_ratio)
-                    
+                    # ---------------------------------------------------------
+                    # ダウ理論・トレンド判定 & ロング/ショート最適化ロジック (パターンA)
+                    # ---------------------------------------------------------
                     sma20 = hist["Close"].rolling(window=20).mean().iloc[-1]
                     sma50 = hist["Close"].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else sma20
-                    trend_status = "上昇トレンド (買い目線🟢)" if latest_close > sma20 > sma50 else ("下降トレンド (売り/様子見🔴)" if latest_close < sma20 else "レンジ・転換模索中🟡")
+
+                    if latest_close > sma20 > sma50:
+                        trend_type = "BULL"
+                        trend_status = "上昇トレンド (買い目線🟢)"
+                        entry_side_label = "ロング (買い)"
+                        stop_loss = recent_low * 0.995  # 直近安値の少し下
+                        risk = latest_close - stop_loss
+                        take_profit = latest_close + (risk * rr_ratio)
+                        sl_delta_text = f"-{(latest_close - stop_loss)/latest_close*100:.1f}%"
+                        tp_delta_text = f"+{(take_profit - latest_close)/latest_close*100:.1f}%"
+                        sl_label = "損切りライン (SL) [直近安値]"
+                    elif latest_close < sma20:
+                        trend_type = "BEAR"
+                        trend_status = "下降トレンド (売り目線🔴)"
+                        entry_side_label = "ショート (戻り売り)"
+                        stop_loss = recent_high * 1.005  # 直近高値の少し上
+                        risk = stop_loss - latest_close
+                        take_profit = latest_close - (risk * rr_ratio)
+                        sl_delta_text = f"+{(stop_loss - latest_close)/latest_close*100:.1f}%"
+                        tp_delta_text = f"-{(latest_close - take_profit)/latest_close*100:.1f}%"
+                        sl_label = "損切りライン (SL) [直近高値]"
+                    else:
+                        trend_type = "RANGE"
+                        trend_status = "レンジ・転換模索中🟡"
+                        entry_side_label = "ロング (レンジ仮定)"
+                        stop_loss = recent_low * 0.995
+                        risk = max(latest_close - stop_loss, 1.0)
+                        take_profit = latest_close + (risk * rr_ratio)
+                        sl_delta_text = f"-{(latest_close - stop_loss)/latest_close*100:.1f}%"
+                        tp_delta_text = f"+{(take_profit - latest_close)/latest_close*100:.1f}%"
+                        sl_label = "損切りライン (SL) [直近安値]"
 
                     c1, c2, c3 = st.columns(3)
                     with c1:
@@ -296,14 +351,14 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     with c3:
                         st.metric("ダウ理論・トレンド判定", trend_status)
 
-                    st.markdown("#### ⚡ YTT風・自動売買ラインナビ (ダウ理論ベース)")
+                    st.markdown("#### ⚡ YTT風・自動売買ラインナビ (トレンド順張り対応)")
                     ytt1, ytt2, ytt3, ytt4 = st.columns(4)
                     with ytt1:
-                        st.metric("推奨エントリー価格", f"¥{latest_close:,.1f}")
+                        st.metric("推奨エントリー", f"¥{latest_close:,.1f}", delta=f"戦略: {entry_side_label}", delta_color="off")
                     with ytt2:
-                        st.metric("損切りライン (SL) [直近安値]", f"¥{stop_loss:,.1f}", delta=f"-{(latest_close-stop_loss)/latest_close*100:.1f}%", delta_color="inverse")
+                        st.metric(sl_label, f"¥{stop_loss:,.1f}", delta=sl_delta_text, delta_color="inverse")
                     with ytt3:
-                        st.metric(f"目標利確ライン (TP) [RR {rr_ratio}]", f"¥{take_profit:,.1f}", delta=f"+{(take_profit-latest_close)/latest_close*100:.1f}%")
+                        st.metric(f"目標利確 (TP) [RR {rr_ratio}]", f"¥{take_profit:,.1f}", delta=tp_delta_text)
                     with ytt4:
                         st.metric("想定リスクリワード", f"1 : {rr_ratio}")
 
@@ -318,12 +373,16 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     fig_stock.add_trace(go.Scatter(x=hist.index, y=hist["SMA20"], mode='lines', name='20本移動平均', line=dict(color='orange', width=1.5)))
                     fig_stock.add_trace(go.Scatter(x=hist.index, y=hist["SMA50"], mode='lines', name='50本移動平均', line=dict(color='blue', width=1.5)))
                     
-                    fig_stock.add_hline(y=take_profit, line_dash="dash", line_color="green", annotation_text=f"利確目標 (TP): ¥{take_profit:,.1f}")
+                    # ラインの色をトレンドに応じて動的に変更
+                    tp_color = "green" if trend_type == "BULL" else "red"
+                    sl_color = "red" if trend_type == "BULL" else "green"
+
+                    fig_stock.add_hline(y=take_profit, line_dash="dash", line_color=tp_color, annotation_text=f"利確目標 (TP): ¥{take_profit:,.1f}")
                     fig_stock.add_hline(y=latest_close, line_dash="dot", line_color="blue", annotation_text=f"現在地/エントリー: ¥{latest_close:,.1f}")
-                    fig_stock.add_hline(y=stop_loss, line_dash="dash", line_color="red", annotation_text=f"損切り (SL): ¥{stop_loss:,.1f}")
+                    fig_stock.add_hline(y=stop_loss, line_dash="dash", line_color=sl_color, annotation_text=f"損切り (SL): ¥{stop_loss:,.1f}")
 
                     fig_stock.update_layout(
-                        title=f"{selected_ticker} のローソク足チャート ({timeframe_option}) & YTT売買ライン",
+                        title=f"{selected_ticker} のローソク足チャート ({timeframe_option}) & YTT売買ライン [{entry_side_label}]",
                         yaxis_title="株価 (JPY)", xaxis_rangeslider_visible=False,
                         height=540, hovermode="x unified"
                     )
