@@ -12,12 +12,12 @@ from streamlit_autorefresh import st_autorefresh
 # ページ基本設定
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="株式スクリーナー & よすが式YTTナビ",
+    page_title="株式スクリーナー",
     page_icon="📈",
     layout="wide"
 )
 
-st.title("📈 株式スクリーナー & よすが式YTTナビ")
+st.title("📈 株式スクリーナー")
 st.caption("ダウ理論トレンド判定、YTT風自動リワード・リスク算出、分足/日足マルチ時間軸チャート、自動更新ナビ")
 
 # 日本時間 (JST: UTC+9) の定義
