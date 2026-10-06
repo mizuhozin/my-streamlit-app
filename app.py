@@ -12,12 +12,12 @@ from streamlit_autorefresh import st_autorefresh
 # ページ基本設定
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="株式スクリーナー",
+    page_title="株式スクリーナー & YTT風自動ナビ",
     page_icon="📈",
     layout="wide"
 )
 
-st.title("📈 株式スクリーナー")
+st.title("📈 株式スクリーナー & YTT風自動ナビ")
 st.caption("ダウ理論トレンド判定、YTT風自動リワード・リスク算出、分足/日足マルチ時間軸チャート、自動更新ナビ")
 
 # 日本時間 (JST: UTC+9) の定義
@@ -133,7 +133,7 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
         st.warning("表示できるデータがありません。")
 
     st.markdown("---")
-    st.subheader("💡 よすが式・ダウ理論＆YTTナビの仕組み")
+    st.subheader("💡 ダウ理論＆YTT風ナビの仕組み")
     col_rule1, col_rule2 = st.columns(2)
     with col_rule1:
         st.info("""
@@ -232,7 +232,7 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
     col_opt1, col_opt2, col_opt3 = st.columns([2, 2, 1])
     with col_opt1:
         timeframe_option = st.selectbox(
-            "⏱️ 時間足 (ローソク足の間隔)",
+            "⏱️️ 時間足 (ローソク足の間隔)",
             ["日足 (1日)", "5分足", "15分足", "1時間足", "週足 (1週間)"],
             index=0
         )
