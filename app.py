@@ -97,7 +97,6 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
 
     st.markdown("---")
 
-    # 取引ルール・検証ロジックの説明カードを追加
     st.subheader("💡 シミュレーションにおける取引ルールと評価指標の説明")
     
     col_rule1, col_rule2 = st.columns(2)
@@ -322,7 +321,8 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
 
     if not hist_sim.empty:
         if "中長期" in horizon_mode:
-            hist_sim = hist_sim.resample('M').last()
+            # 月次データへのリサンプル（'M' から新しい仕様の 'ME' に修正）
+            hist_sim = hist_sim.resample('ME').last()
             sub_hist = hist_sim.tail(simulation_period + 1)
         else:
             sub_hist = hist_sim.tail(simulation_period + 1)
