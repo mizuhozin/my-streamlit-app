@@ -1,10 +1,12 @@
 import os
 import glob
+from datetime import datetime, time
 import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 # ---------------------------------------------------------
 # ページ基本設定
@@ -16,10 +18,10 @@ st.set_page_config(
 )
 
 st.title("📈 株式スクリーナー & よすが式YTTナビ")
-st.caption("ダウ理論トレンド判定、YTT風自動リワード・リスク算出、個別銘柄チャート、バックテスト")
+st.caption("ダウ理論トレンド判定、YTT風自動リワード・リスク算出、分足/日足マルチ時間軸チャート、自動更新ナビ")
 
 # ---------------------------------------------------------
-# セッション状態（保有銘柄・ウォッチリスト）の初期化
+# セッション状態の初期化
 # ---------------------------------------------------------
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = [
@@ -34,7 +36,19 @@ if "watchlist" not in st.session_state:
     ]
 
 # ---------------------------------------------------------
-# サイドバー：ナビゲーションメニュー & データ読み込み
+# 取引時間判定関数（東証: 平日 9:00〜15:30）
+# ---------------------------------------------------------
+def is_market_open():
+    now = datetime.now()
+    # 土日(5, 6)は取引時間外
+    if now.weekday() >= 5:
+        return False
+    market_start = time(9, 0)
+    market_end = time(15, 30)
+    return market_start <= now.time() <= market_end
+
+# ---------------------------------------------------------
+# サイドバー：ナビゲーション & 自動更新設定
 # ---------------------------------------------------------
 st.sidebar.header("📌 メニュー")
 
@@ -47,6 +61,26 @@ menu_selection = st.sidebar.radio(
         "📊 デモ取引・バックテストシミュレーション"
     ]
 )
+
+st.sidebar.markdown("---")
+st.sidebar.header("🔄 リアルタイム自動更新設定")
+
+# ユーザーによる手動ON/OFFトグル
+auto_refresh_enabled = st.sidebar.toggle("自動更新を有効化", value=True)
+refresh_minutes = st.sidebar.slider("更新間隔 (分)", min_value=5, max_value=60, value=5, step=1)
+
+# 東証の開帳チェック
+market_active = is_market_open()
+
+# サイドバーへのステータス明示
+if not auto_refresh_enabled:
+    st.sidebar.info("⏸️ **自動更新: 手動オフ**")
+elif not market_active:
+    st.sidebar.warning("💤 **自動更新: 取引時間外 (自動停止中)**\n※平日 9:00〜15:30 のみ稼働")
+else:
+    st.sidebar.success(f"🟢 **自動更新: 稼働中** ({refresh_minutes}分おき)")
+    # 条件を満たした場合のみ autorefresh を実行（ミリ秒単位）
+    st_autorefresh(interval=refresh_minutes * 60 * 1000, key="ytt_data_refresh")
 
 st.sidebar.markdown("---")
 st.sidebar.header("📁 データ選択")
@@ -169,7 +203,7 @@ elif menu_selection == "⭐ マイ・ウォッチリスト":
         st.info("現在ウォッチリストに登録されている銘柄はありません。")
 
 # =========================================================
-# 画面3: 🔍 個別銘柄 詳細分析 & YTTナビ
+# 画面3: 🔍 個別銘柄 詳細分析 & YTTナビ (マルチ時間軸対応)
 # =========================================================
 elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
     st.subheader("🔍 個別銘柄 詳細分析 & YTT風自動売買ナビ")
@@ -192,17 +226,45 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
     else:
         selected_ticker = st.text_input("銘柄コードを入力 (例: 7203.T)", value="7203.T")
     
-    col_opt1, col_opt2 = st.columns([3, 1])
+    col_opt1, col_opt2, col_opt3 = st.columns([2, 2, 1])
     with col_opt1:
-        period = st.radio("表示期間", ["1mo", "3mo", "6mo", "1y", "2y"], index=2, horizontal=True)
+        timeframe_option = st.selectbox(
+            "⏱️ 時間足 (ローソク足の間隔)",
+            ["日足 (1日)", "5分足", "15分足", "1時間足", "週足 (1週間)"],
+            index=0
+        )
     with col_opt2:
+        period_option = st.selectbox(
+            "📅 表示対象期間",
+            ["1日 (1d)", "5日 (5d)", "1ヶ月 (1mo)", "3ヶ月 (3mo)", "6ヶ月 (6mo)", "1年 (1y)"],
+            index=3
+        )
+    with col_opt3:
         rr_ratio = st.selectbox("目標リスクリワード比", [1.0, 1.5, 2.0, 2.5], index=1)
     
+    # yfinance 用のパラメータマッピング
+    tf_map = {
+        "5分足": "5m", "15分足": "15m", "1時間足": "60m",
+        "日足 (1日)": "1d", "週足 (1週間)": "1wk"
+    }
+    p_map = {
+        "1日 (1d)": "1d", "5日 (5d)": "5d", "1ヶ月 (1mo)": "1mo",
+        "3ヶ月 (3mo)": "3mo", "6ヶ月 (6mo)": "6mo", "1年 (1y)": "1y"
+    }
+
+    interval_val = tf_map[timeframe_option]
+    period_val = p_map[period_option]
+
+    # 分足データ取得制限の自動補正（yfinance制限対策）
+    if interval_val in ["5m", "15m"] and period_val in ["3mo", "6mo", "1y"]:
+        period_val = "1mo"
+        st.warning("⚠️ 分足データは直近1ヶ月間（1mo）まで自動調整して取得します。")
+
     if selected_ticker:
-        with st.spinner(f"{selected_ticker} の株価データを取得中..."):
+        with st.spinner(f"{selected_ticker} ({timeframe_option}) のデータを取得中..."):
             try:
                 stock = yf.Ticker(selected_ticker)
-                hist = stock.history(period=period)
+                hist = stock.history(period=period_val, interval=interval_val)
                 info = stock.info
                 
                 if not hist.empty:
@@ -214,18 +276,14 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     company_name = info.get("longName", info.get("shortName", selected_ticker))
                     
                     # --- YTT風 ダウ理論レベル自動算出 ---
-                    # 直近20営業日をベースに押し安値（Lowの最小値）と最高値（Highの最大値）を検出
                     recent_df = hist.tail(20)
                     recent_low = recent_df["Low"].min()
                     recent_high = recent_df["High"].max()
                     
-                    # 損切りライン (SL): 直近押し安値の0.5%下
                     stop_loss = recent_low * 0.995
                     risk = latest_close - stop_loss
-                    # 利確ライン (TP): リスク × 指定リワード比
                     take_profit = latest_close + (risk * rr_ratio)
                     
-                    # ダウ理論トレンド判定（単純モメンタム判定）
                     sma20 = hist["Close"].rolling(window=20).mean().iloc[-1]
                     sma50 = hist["Close"].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else sma20
                     trend_status = "上昇トレンド (買い目線🟢)" if latest_close > sma20 > sma50 else ("下降トレンド (売り/様子見🔴)" if latest_close < sma20 else "レンジ・転換模索中🟡")
@@ -235,7 +293,7 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     with c1:
                         st.metric("選択中の銘柄", company_name)
                     with c2:
-                        st.metric("最新終値", f"¥{latest_close:,.1f}", f"{change:+.1f} ({change_pct:+.2f}%)")
+                        st.metric("最新株価", f"¥{latest_close:,.1f}", f"{change:+.1f} ({change_pct:+.2f}%)")
                     with c3:
                         st.metric("ダウ理論・トレンド判定", trend_status)
 
@@ -260,18 +318,18 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                         x=hist.index, open=hist["Open"], high=hist["High"],
                         low=hist["Low"], close=hist["Close"], name="株価"
                     ))
-                    fig_stock.add_trace(go.Scatter(x=hist.index, y=hist["SMA20"], mode='lines', name='20日移動平均', line=dict(color='orange', width=1.5)))
-                    fig_stock.add_trace(go.Scatter(x=hist.index, y=hist["SMA50"], mode='lines', name='50日移動平均', line=dict(color='blue', width=1.5)))
+                    fig_stock.add_trace(go.Scatter(x=hist.index, y=hist["SMA20"], mode='lines', name='20本移動平均', line=dict(color='orange', width=1.5)))
+                    fig_stock.add_trace(go.Scatter(x=hist.index, y=hist["SMA50"], mode='lines', name='50本移動平均', line=dict(color='blue', width=1.5)))
                     
-                    # YTTのラインをチャートに水平線として追加
+                    # YTTラインオーバーレイ
                     fig_stock.add_hline(y=take_profit, line_dash="dash", line_color="green", annotation_text=f"利確目標 (TP): ¥{take_profit:,.1f}")
-                    fig_stock.add_hline(y=latest_close, line_dash="dot", line_color="blue", annotation_text=f"エントリー: ¥{latest_close:,.1f}")
+                    fig_stock.add_hline(y=latest_close, line_dash="dot", line_color="blue", annotation_text=f"現在地/エントリー: ¥{latest_close:,.1f}")
                     fig_stock.add_hline(y=stop_loss, line_dash="dash", line_color="red", annotation_text=f"損切り (SL): ¥{stop_loss:,.1f}")
 
                     fig_stock.update_layout(
-                        title=f"{selected_ticker} のローソク足 & YTT売買ライン",
+                        title=f"{selected_ticker} のローソク足チャート ({timeframe_option}) & YTT売買ライン",
                         yaxis_title="株価 (JPY)", xaxis_rangeslider_visible=False,
-                        height=520, hovermode="x unified"
+                        height=540, hovermode="x unified"
                     )
                     st.plotly_chart(fig_stock, use_container_width=True)
                 else:
