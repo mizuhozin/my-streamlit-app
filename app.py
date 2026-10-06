@@ -10,23 +10,27 @@ import streamlit as st
 # ページ基本設定
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="株式スクリーナー & ウォッチリスト管理",
+    page_title="株式スクリーナー & ウォッチリスト・運用分析",
     page_icon="📈",
     layout="wide"
 )
 
-st.title("📈 株式スクリーナー & ウォッチリスト管理")
-st.caption("自動スクリーニング結果、マイウォッチリスト管理、個別銘柄分析、仮想運用シミュレーション")
+st.title("📈 株式スクリーナー & ウォッチリスト・運用分析")
+st.caption("自動スクリーニング、ポートフォリオ管理、個別銘柄チャート、実銘柄/仮想取引シミュレーション")
 
 # ---------------------------------------------------------
-# セッション状態（ウォッチリストの保持）の初期化
+# セッション状態（保有銘柄・ウォッチリスト）の初期化
 # ---------------------------------------------------------
 if "watchlist" not in st.session_state:
-    # 初期サンプル登録（トヨタ、ソニー、NTT）
     st.session_state.watchlist = [
-        {"Ticker": "7203.T", "銘柄名": "トヨタ自動車", "メモ": "主力・高配当"},
-        {"Ticker": "6758.T", "銘柄名": "ソニーグループ", "メモ": "エンタメ・半導体"},
-        {"Ticker": "9432.T", "銘柄名": "NTT", "メモ": "ディフェンシブ"}
+        {"Ticker": "2914.T", "銘柄名": "日本JT", "メモ": "保有: 10株 / 超高配当・ディフェンシブ"},
+        {"Ticker": "8001.T", "銘柄名": "伊藤忠商事", "メモ": "保有: 5株 / 総合商社・非資源強み"},
+        {"Ticker": "8058.T", "銘柄名": "三菱商事", "メモ": "保有: 5株 / 総合商社・連続増配"},
+        {"Ticker": "8316.T", "銘柄名": "三井住友FG", "メモ": "保有: 10株 / メガバンク・高配当"},
+        {"Ticker": "8593.T", "銘柄名": "三菱HCキャピタル", "メモ": "保有: 10株 / 20期以上連続増配"},
+        {"Ticker": "8697.T", "銘柄名": "日本取引所グループ", "メモ": "保有: 5株 / 東証運営・インフラ独占"},
+        {"Ticker": "8725.T", "銘柄名": "MS&ADインシュアランスG", "メモ": "保有: 5株 / 損保大手・高配当"},
+        {"Ticker": "9432.T", "銘柄名": "NTT", "メモ": "保有: 30株 / 通信ディフェンシブ"}
     ]
 
 # ---------------------------------------------------------
@@ -57,17 +61,17 @@ else:
     })
 
 # ---------------------------------------------------------
-# メインタブの構成（4つのタブ）
+# メインタブ構成
 # ---------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "📋 スクリーニング対象銘柄一覧",
     "⭐ マイ・ウォッチリスト",
     "🔍 個別銘柄 詳細分析 (yfinance)",
-    "📊 デモ取引シミュレーション"
+    "📊 デモ取引・バックテストシミュレーション"
 ])
 
 # =========================================================
-# タブ1: スクリーニング結果データテーブル表示
+# タブ1: スクリーニング結果
 # =========================================================
 with tab1:
     st.subheader("📋 本日の自動スクリーニング推奨銘柄")
@@ -88,11 +92,11 @@ with tab1:
         st.warning("表示できるデータがありません。")
 
 # =========================================================
-# タブ2: マイ・ウォッチリスト（追加・削除機能）
+# タブ2: マイ・ウォッチリスト管理
 # =========================================================
 with tab2:
     st.subheader("⭐ マイ・ウォッチリスト管理")
-    st.caption("気になる銘柄を手動で追加・削除して管理できます。")
+    st.caption("保有銘柄や気になる銘柄を手動で追加・削除・編集できます。")
 
     # 新規追加フォーム
     with st.form("add_symbol_form", clear_on_submit=True):
@@ -103,15 +107,14 @@ with tab2:
         with col_b:
             new_name = st.text_input("銘柄名 (例: ソフトバンクG)", placeholder="ソフトバンクG")
         with col_c:
-            new_memo = st.text_input("メモ (例: AI関連・決算前)", placeholder="メモを入力")
+            new_memo = st.text_input("メモ (例: 保有10株 / ディフェンシブ)", placeholder="メモを入力")
         with col_d:
-            st.write("") # スペース調整
+            st.write("")
             st.write("")
             submit_btn = st.form_submit_button("リストに追加")
 
         if submit_btn:
             if new_ticker:
-                # 重複チェック
                 existing_tickers = [item["Ticker"] for item in st.session_state.watchlist]
                 if new_ticker.upper() in existing_tickers:
                     st.error(f"{new_ticker} は既にリストに存在します。")
@@ -131,9 +134,6 @@ with tab2:
     # リスト一覧・削除機能
     st.markdown("##### 📄 現在のウォッチリスト一覧")
     if st.session_state.watchlist:
-        df_watch = pd.DataFrame(st.session_state.watchlist)
-        
-        # 1銘柄ずつ削除ボタン付きで表示
         for idx, item in enumerate(st.session_state.watchlist):
             c_code, c_name, c_memo, c_del = st.columns([2, 3, 4, 2])
             with c_code:
@@ -149,7 +149,7 @@ with tab2:
                     st.rerun()
             st.markdown("<hr style='margin: 4px 0;'>", unsafe_allow_html=True)
     else:
-        st.info("現在ウォッチリストに登録されている銘柄はありません。上のフォームから追加してください。")
+        st.info("現在ウォッチリストに登録されている銘柄はありません。")
 
 # =========================================================
 # タブ3: 個別銘柄 詳細分析 (yfinance)
@@ -157,15 +157,11 @@ with tab2:
 with tab3:
     st.subheader("🔍 個別銘柄のリアルタイム分析")
     
-    # スクリーニング推奨銘柄とウォッチリストの両方を統合した選択肢リストを作成
     combined_options = []
-    
-    # 1. ウォッチリストから選択肢を作成
     if st.session_state.watchlist:
         for item in st.session_state.watchlist:
             combined_options.append(f"⭐ [ウォッチ] {item['Ticker']} - {item['銘柄名']}")
             
-    # 2. スクリーニング一覧から選択肢を作成
     if not df_raw.empty and "Ticker" in df_raw.columns:
         for _, row in df_raw.iterrows():
             name = row.get("銘柄名", row["Ticker"])
@@ -174,8 +170,7 @@ with tab3:
                 combined_options.append(opt)
     
     if combined_options:
-        selected_option = st.selectbox("分析する銘柄を選択してください", combined_options)
-        # コードだけを抽出（例: "⭐ [ウォッチ] 7203.T - トヨタ" -> "7203.T"）
+        selected_option = st.selectbox("分析する銘柄を選択してください", combined_options, key="select_analysis_ticker")
         selected_ticker = selected_option.split("] ")[1].split(" - ")[0]
     else:
         selected_ticker = st.text_input("銘柄コードを入力 (例: 7203.T)", value="7203.T")
@@ -206,11 +201,9 @@ with tab3:
                         market_cap = info.get("marketCap", 0)
                         st.metric("時価総額", f"¥{market_cap/1e8:,.0f} 億円" if market_cap else "N/A")
                     
-                    # 移動平均線
                     hist["SMA20"] = hist["Close"].rolling(window=20).mean()
                     hist["SMA50"] = hist["Close"].rolling(window=50).mean()
                     
-                    # ローソク足チャート
                     fig_stock = go.Figure()
                     fig_stock.add_trace(go.Candlestick(
                         x=hist.index, open=hist["Open"], high=hist["High"],
@@ -231,13 +224,22 @@ with tab3:
                 st.error(f"データ取得中にエラーが発生しました: {e}")
 
 # =========================================================
-# タブ4: デモ取引シミュレーション
+# タブ4: デモ取引 & バックテストシミュレーション
 # =========================================================
 with tab4:
-    st.subheader("💡 仮想トレード・パラメータ設定")
+    st.subheader("📊 取引シミュレーション & バックテスト")
     
+    # モード選択（仮想試算モデル vs 実際の銘柄データ）
+    sim_mode = st.radio(
+        "シミュレーション・モードの選択",
+        ["🎲 仮想確率モデル (戦略全体のデモ)", "📈 実際の銘柄（過去株価データでバックテスト）"],
+        horizontal=True
+    )
+    
+    st.markdown("---")
+    
+    # パラメータ入力欄
     col_param1, col_param2, col_param3, col_param4 = st.columns(4)
-    
     with col_param1:
         initial_capital = st.number_input(
             "初期投資金額 (JPY)",
@@ -256,21 +258,88 @@ with tab4:
     with col_param4:
         simulation_days = st.slider(
             "検証期間 (営業日)",
-            min_value=10, max_value=90, value=30, step=5
+            min_value=10, max_value=120, value=30, step=5
         )
 
-    # --- 計算ロジック ---
-    np.random.seed(42)
-    daily_returns_strategy = np.random.normal(0.0035, 0.012, simulation_days)
-    daily_returns_benchmark = np.random.normal(0.0005, 0.008, simulation_days)
-    daily_returns_strategy = np.clip(daily_returns_strategy, -stop_loss_pct, take_profit_pct)
+    # ---------------------------------------------------------
+    # モードA: 仮想確率モデル
+    # ---------------------------------------------------------
+    if sim_mode == "🎲 仮想確率モデル (戦略全体のデモ)":
+        st.info("💡 確率分布モデルを用いて、戦略ルール通りの運用を行った場合の仮想的な資産推移をシミュレーションします。")
+        
+        np.random.seed(42)
+        daily_returns_strategy = np.random.normal(0.0035, 0.012, simulation_days)
+        daily_returns_benchmark = np.random.normal(0.0005, 0.008, simulation_days)
+        daily_returns_strategy = np.clip(daily_returns_strategy, -stop_loss_pct, take_profit_pct)
 
-    portfolio_values = initial_capital * np.cumprod(1 + daily_returns_strategy)
-    portfolio_values = np.insert(portfolio_values, 0, initial_capital)
+        portfolio_values = initial_capital * np.cumprod(1 + daily_returns_strategy)
+        portfolio_values = np.insert(portfolio_values, 0, initial_capital)
 
-    benchmark_values = initial_capital * np.cumprod(1 + daily_returns_benchmark)
-    benchmark_values = np.insert(benchmark_values, 0, initial_capital)
+        benchmark_values = initial_capital * np.cumprod(1 + daily_returns_benchmark)
+        benchmark_values = np.insert(benchmark_values, 0, initial_capital)
 
+        labels = [f"{i}日目" for i in range(simulation_days + 1)]
+        target_name = "仮想戦略ポートフォリオ"
+
+    # ---------------------------------------------------------
+    # モードB: 実際の銘柄データでバックテスト
+    # ---------------------------------------------------------
+    else:
+        st.info("💡 ウォッチリストまたはスクリーニング結果から実銘柄を選び、実際の過去株価データに基づいてバックテストを行います。")
+        
+        # 銘柄選択肢を作成
+        sim_ticker_options = []
+        if st.session_state.watchlist:
+            for item in st.session_state.watchlist:
+                sim_ticker_options.append(f"⭐ [ウォッチ] {item['Ticker']} - {item['銘柄名']}")
+        if not df_raw.empty and "Ticker" in df_raw.columns:
+            for _, row in df_raw.iterrows():
+                name = row.get("銘柄名", row["Ticker"])
+                opt = f"📋 [推奨] {row['Ticker']} - {name}"
+                if opt not in sim_ticker_options:
+                    sim_ticker_options.append(opt)
+
+        if sim_ticker_options:
+            selected_sim_opt = st.selectbox("シミュレーション対象の銘柄を選択", sim_ticker_options, key="sim_ticker_select")
+            target_ticker = selected_sim_opt.split("] ")[1].split(" - ")[0]
+            target_name = selected_sim_opt.split(" - ")[1]
+        else:
+            target_ticker = "7203.T"
+            target_name = "トヨタ自動車"
+
+        # yfinance から実データ取得
+        with st.spinner(f"{target_ticker} の過去株価データを取得して検証中..."):
+            stock_sim = yf.Ticker(target_ticker)
+            # 余裕をもって多めに取得
+            hist_sim = stock_sim.history(period="6mo")
+
+        if not hist_sim.empty and len(hist_sim) >= simulation_days:
+            # 最新から指定営業日数分を切り出し
+            sub_hist = hist_sim.tail(simulation_days + 1)
+            prices = sub_hist["Close"].values
+            
+            # 日次変化率
+            daily_changes = np.diff(prices) / prices[:-1]
+            
+            # 利確・損切りルールの適用
+            clipped_changes = np.clip(daily_changes, -stop_loss_pct, take_profit_pct)
+            
+            # 資産推移計算
+            portfolio_values = initial_capital * np.cumprod(1 + clipped_changes)
+            portfolio_values = np.insert(portfolio_values, 0, initial_capital)
+            
+            # 単純保有（ホールド）した場合の比較
+            hold_returns = daily_changes
+            benchmark_values = initial_capital * np.cumprod(1 + hold_returns)
+            benchmark_values = np.insert(benchmark_values, 0, initial_capital)
+            
+            labels = [d.strftime('%m/%d') for d in sub_hist.index]
+            daily_returns_strategy = clipped_changes
+        else:
+            st.error("株価データの取得件数が不足しています。他の期間または銘柄をお試しください。")
+            st.stop()
+
+    # --- KPI計算・表示（共通） ---
     final_value = portfolio_values[-1]
     total_return_pct = ((final_value - initial_capital) / initial_capital) * 100
 
@@ -289,7 +358,6 @@ with tab4:
 
     st.markdown("---")
 
-    # --- KPIカード表示 ---
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     with kpi1:
         st.metric("最終資産額", f"¥{final_value:,.0f}", f"{total_return_pct:+.1f}%")
@@ -303,21 +371,21 @@ with tab4:
 
     st.markdown("---")
 
-    # --- 資産推移チャート ---
-    st.subheader("📊 資産推移・ベンチマーク比較チャート")
-    days_label = [f"{i}日目" for i in range(simulation_days + 1)]
+    # --- チャート表示 ---
+    st.subheader(f"📊 {target_name} 資産推移・バックテストチャート")
 
     fig_sim = go.Figure()
     fig_sim.add_trace(go.Scatter(
-        x=days_label, y=portfolio_values, mode='lines+markers', name='デモ戦略ポートフォリオ',
+        x=labels, y=portfolio_values, mode='lines+markers', name='ルール適用時の運用推移',
         line=dict(color='#2563EB', width=3), fill='tonexty', fillcolor='rgba(37, 99, 235, 0.08)'
     ))
     fig_sim.add_trace(go.Scatter(
-        x=days_label, y=benchmark_values, mode='lines+markers', name='ベンチマーク (TOPIX相当)',
+        x=labels, y=benchmark_values, mode='lines+markers',
+        name='そのまま保有(ホールド)の場合' if sim_mode != "🎲 仮想確率モデル (戦略全体のデモ)" else 'ベンチマーク (TOPIX相当)',
         line=dict(color='#64748B', width=2, dash='dot')
     ))
     fig_sim.update_layout(
-        xaxis_title="経過日数", yaxis_title="資産額 (JPY)", yaxis=dict(tickformat=",.0f"),
+        xaxis_title="日付 / 経過日数", yaxis_title="資産額 (JPY)", yaxis=dict(tickformat=",.0f"),
         hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=20, r=20, t=40, b=20), height=420
     )
