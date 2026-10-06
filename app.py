@@ -38,7 +38,6 @@ if "watchlist" not in st.session_state:
 # ---------------------------------------------------------
 st.sidebar.header("📌 メニュー")
 
-# 左側のサイドバーにメインメニューを配置
 menu_selection = st.sidebar.radio(
     "機能を選択してください",
     [
@@ -95,6 +94,36 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
         st.caption(f"該当銘柄数: {len(filtered_df)} 件")
     else:
         st.warning("表示できるデータがありません。")
+
+    st.markdown("---")
+
+    # 取引ルール・検証ロジックの説明カードを追加
+    st.subheader("💡 シミュレーションにおける取引ルールと評価指標の説明")
+    
+    col_rule1, col_rule2 = st.columns(2)
+    
+    with col_rule1:
+        st.info("""
+        **⚙️ バックテスト（ルールの運用推移）の検証条件**
+        
+        * **買付条件:** 対象期間の初日に初期投資資金で全額購入（エントリー）したと仮定します。
+        * **目標利確ライン (Take Profit):** 1期間あたりの上昇率がこの設定値に達した場合、利益を確定してリスクをオフにします。
+        * **損切りライン (Stop Loss):** 1期間あたりの下落率がこの設定値を超えた場合、損失を限定するため機械的に損切り（撤退）します。
+        * **検証スパンの切り替え:**
+          * **短期トレード目線:** 1日（営業日）単位での変動幅に対して利確/損切り判定を行います。
+          * **中長期投資目線:** 月次（1ヶ月単位）の変動幅に対して判定を行い、ノイズを排除してトレンドを追従します。
+        """)
+
+    with col_rule2:
+        st.success("""
+        **📊 『ガチホ（そのまま保有）』との比較＆プロフィットファクター（PF）**
+        
+        * **ガチホ（そのまま保有）:** 利確や損切りを行わず、期間初日から最終日まで単純に対象銘柄を保有し続けた場合の資産推移です。
+        * **プロフィットファクター (PF):**
+          * 判定式: `PF = 総利益 ÷ 総損失`
+          * **PF > 1.5 (優良):** 利益が損失を大きく上回っており、期待値の高い優良なトレードルールです。
+          * **PF < 1.5 (要改善):** 損切りにかかる回数が多い、または利確幅が狭く、損失に対して十分な利益が得られていません。
+        """)
 
 # =========================================================
 # 画面2: ⭐ マイ・ウォッチリスト管理
@@ -232,7 +261,6 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 (yfinance)":
 elif menu_selection == "📊 デモ取引・バックテストシミュレーション":
     st.subheader("📊 取引シミュレーション & バックテスト")
     
-    # 投資目線（タイムフレーム）の選択
     horizon_mode = st.radio(
         "🎯 投資目線（検証スパン）の選択",
         ["⚡ 短期トレード目線 (日次スイング)", "🏛️ 中長期投資目線 (月次・トレンド重視)"],
@@ -269,7 +297,6 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
             simulation_period = st.slider("検証期間 (ヶ月)", min_value=3, max_value=36, value=12, step=3)
             fetch_period = "3y"
 
-    # 銘柄選択
     sim_ticker_options = []
     if st.session_state.watchlist:
         for item in st.session_state.watchlist:
@@ -289,7 +316,6 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
         target_ticker = "2914.T"
         target_name = "日本JT"
 
-    # バックテスト実行
     with st.spinner(f"{target_name} ({target_ticker}) のデータを取得中..."):
         stock_sim = yf.Ticker(target_ticker)
         hist_sim = stock_sim.history(period=fetch_period)
@@ -316,7 +342,6 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
         labels = [d.strftime('%Y/%m' if "中長期" in horizon_mode else '%m/%d') for d in sub_hist.index]
         daily_returns_strategy = clipped_changes
 
-        # KPI計算
         final_value = portfolio_values[-1]
         total_return_pct = ((final_value - initial_capital) / initial_capital) * 100
 
@@ -335,7 +360,6 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
 
         st.markdown("---")
 
-        # 指標カード表示
         k1, k2, k3, k4 = st.columns(4)
         with k1:
             st.metric("最終資産額", f"¥{final_value:,.0f}", f"{total_return_pct:+.1f}%")
@@ -349,7 +373,6 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
 
         st.markdown("---")
 
-        # グラフ描画
         st.subheader(f"📊 {target_name} ({target_ticker}) パフォーマンス推移")
         fig_sim = go.Figure()
         fig_sim.add_trace(go.Scatter(
@@ -366,5 +389,12 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
             margin=dict(l=20, r=20, t=40, b=20), height=420
         )
         st.plotly_chart(fig_sim, use_container_width=True)
+
+        with st.expander("❓ 取引ルール・計算方式の解説を開く"):
+            st.markdown("""
+            * **ルールの運用推移 (青線):** 設定した「目標利確ライン」と「損切りライン」を越える変動を制限（カット）し、リスク管理を行った場合の資産推移です。
+            * **ガチホ（そのまま保有） (点線):** 利確や損切りを行わずに、対象期間の最初に買ったまま保有し続けた場合の実際の株価推移（トータルリターン）です。
+            * **プロフィットファクター (PF):** `総利益 ÷ 総損失` で算出され、1.5以上で「優良なトレードルール」と判定されます。
+            """)
     else:
         st.error("データの取得に失敗しました。")
