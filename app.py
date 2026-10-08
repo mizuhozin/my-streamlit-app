@@ -48,6 +48,10 @@ if "watchlist" not in st.session_state:
         {"Ticker": "9432.T", "銘柄名": "NTT", "メモ": "保有: 30株 / 通信ディフェンシブ"},
     ]
 
+# 朝8:30の自動更新フラグ管理
+if "last_830_refreshed_date" not in st.session_state:
+    st.session_state.last_830_refreshed_date = ""
+
 
 # ---------------------------------------------------------
 # 日本時間ベースの取引時間判定関数（東証: 平日 9:00〜15:30）
@@ -59,6 +63,22 @@ def is_market_open():
     market_start = time(9, 0)
     market_end = time(15, 30)
     return market_start <= now_jst.time() <= market_end
+
+
+# ---------------------------------------------------------
+# 朝8:30 自動更新ロジック
+# ---------------------------------------------------------
+now_jst = datetime.now(JST)
+today_str = now_jst.strftime("%Y-%m-%d")
+
+# 平日かつ朝8:30〜8:31の間隔内で、まだ本日実行されていない場合にリフレッシュ
+if now_jst.weekday() < 5 and now_jst.time() >= time(8, 30) and now_jst.time() < time(8, 31):
+    if st.session_state.last_830_refreshed_date != today_str:
+        st.session_state.last_830_refreshed_date = today_str
+        safe_rerun()
+
+# 8:30のタイミングを検知するためのバックグラウンド監視タイマー（60秒おき）
+st_autorefresh(interval=60 * 1000, key="morning_830_checker")
 
 
 # ---------------------------------------------------------
@@ -90,7 +110,7 @@ if not auto_refresh_enabled:
     st.sidebar.info("⏸️ **自動更新: 手動オフ**")
 elif not market_active:
     st.sidebar.warning(
-        "💤 **自動更新: 取引時間外 (自動停止中)**\n※平日 9:00〜15:30 (JST) のみ稼働"
+        "💤 **自動更新: 取引時間外 (自動停止中)**\n※平日 9:00〜15:30 (JST) のみ稼働\n※毎朝 8:30 に日次自動更新"
     )
 else:
     st.sidebar.success(f"🟢 **自動更新: 稼働中** ({refresh_minutes}分おき)")
@@ -745,7 +765,7 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
                         high_price = row["High"]
                         low_price = row["Low"]
 
-                        # エントリー判定 (ポジションがない場合、20SMA上抜けで購入)
+                        # エントリー判定 (ポジションがない場合)
                         if position == 0:
                             position = int(capital // close_price)
                             if position > 0:
@@ -787,15 +807,28 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
 
                     # 資産推移グラフの作成
                     fig_curve = go.Figure()
-                    fig_curve.add_trace(go.Scatter(y=capital_curve, mode='lines+markers', name='総資産推移', line=dict(color='green', width=2)))
-                    fig_curve.update_layout(title=f"{sim_ticker} バックテスト期間中の資産推移", yaxis_title="資産 (JPY)", height=400)
+                    fig_curve.add_trace(
+                        go.Scatter(
+                            y=capital_curve,
+                            mode="lines+markers",
+                            name="総資産額 (JPY)",
+                            line=dict(color="#00CC96", width=2),
+                        )
+                    )
+                    fig_curve.update_layout(
+                        title=f"{sim_ticker} バックテスト期間中の資産推移",
+                        xaxis_title="経過日数/ステップ",
+                        yaxis_title="資産価値 (JPY)",
+                        height=400,
+                    )
                     st.plotly_chart(fig_curve, use_container_width=True)
 
                     if trade_history:
-                        st.markdown("##### 📜 取引履歴詳細")
+                        st.markdown("##### 📜 売買履歴")
                         st.dataframe(pd.DataFrame(trade_history), use_container_width=True)
-
+                    else:
+                        st.info("指定された条件（TP/SL）に達する売買取引は発生しませんでした。")
                 else:
-                    st.error("データが取得できませんでした。")
+                    st.error("シミュレーション用のデータを取得できませんでした。")
             except Exception as e:
-                st.error(f"シミュレーション実行中にエラーが発生しました: {e}")
+                st.error(f"バックテスト実行中にエラーが発生しました: {e}")
