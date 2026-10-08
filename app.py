@@ -1,10 +1,12 @@
 import glob
+import json
 import os
 from datetime import datetime, time, timedelta, timezone
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
@@ -24,6 +26,9 @@ st.caption(
 # 日本時間 (JST: UTC+9) の定義
 JST = timezone(timedelta(hours=9))
 
+# 環境変数からDiscord Webhook URLを取得（未設定時のデフォルト）
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL") or "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE"
+
 
 # 安全なリターン（再描画）関数
 def safe_rerun():
@@ -31,6 +36,104 @@ def safe_rerun():
         st.rerun()
     elif hasattr(st, "experimental_rerun"):
         st.experimental_rerun()
+
+
+# ---------------------------------------------------------
+# Discord通知送信処理
+# ---------------------------------------------------------
+def send_current_analysis_to_discord(df_data, webhook_url):
+    """現在の分析結果データ（上位銘柄）を定時送信と同じ形式でDiscordへ即座に送信"""
+    if not webhook_url or "YOUR_WEBHOOK_URL_HERE" in webhook_url:
+        return False, "Discord Webhook URLが設定されていません。サイドバーのURL設定をご確認ください。"
+
+    now_str = datetime.now(JST).strftime("%Y-%m-%d %H:%M")
+
+    if df_data.empty:
+        payload = {
+            "content": f"🔔 **【株式スクリーナー 手動テスト通知 ({now_str})】**\n現在分析可能な推奨銘柄はありませんでした。"
+        }
+    else:
+        # 上位5件に絞り込み
+        top_df = df_data.head(5)
+        embeds = []
+
+        for idx, (_, row) in enumerate(top_df.iterrows(), 1):
+            ticker = str(row.get("Ticker", row.get("銘柄コード", "----"))).replace(".T", "")
+            price = float(row.get("株価", row.get("Close", 0.0)))
+            stop_loss = float(row.get("Stop_Loss", price * 0.96))
+            take_profit = float(row.get("Take_Profit", price * 1.06))
+            rr_ratio = row.get("RR_Ratio", 1.5)
+            score = row.get("Score", "-")
+            sim_score = row.get("PatternSimilarity", "-")
+            pattern_name = row.get("PatternName", row.get("判定", "買い条件合致"))
+
+            sl_pct = -((price - stop_loss) / price * 100) if price > 0 else 0.0
+            tp_pct = ((take_profit - price) / price * 100) if price > 0 else 0.0
+
+            # テクニカル情報・理由の解析
+            tech_raw = row.get("TechnicalInfo", None)
+            reasons_text = "・25日・75日移動平均線に基づき良好なトレンドを維持"
+            sma25_val = "----"
+            sma75_val = "----"
+
+            if pd.notna(tech_raw):
+                try:
+                    tech_dict = json.loads(tech_raw) if isinstance(tech_raw, str) else tech_raw
+                    if isinstance(tech_dict, dict):
+                        if "reasons" in tech_dict and tech_dict["reasons"]:
+                            reasons_text = "\n".join(tech_dict["reasons"])
+                        sma25_val = f"¥{tech_dict.get('sma25', '----'):,}" if tech_dict.get('sma25') else "----"
+                        sma75_val = f"¥{tech_dict.get('sma75', '----'):,}" if tech_dict.get('sma75') else "----"
+                except Exception:
+                    pass
+
+            fields = [
+                {
+                    "name": "🎯 トレード戦略 & 判定基準",
+                    "value": (
+                        f"・**戦略:** {pattern_name}\n"
+                        f"・🛒 **購入タイミング (現在値):** `¥{price:,.1f}`\n"
+                        f"・🎯 **出口の目標 (TP):** `¥{take_profit:,.1f}` ({tp_pct:+.1f}%)\n"
+                        f"・🛡️ **損切りの目標 (SL):** `¥{stop_loss:,.1f}` ({sl_pct:.1f}%)\n"
+                        f"・⚖️ **リスクリワード:** `1 : {rr_ratio}`"
+                    ),
+                    "inline": False,
+                },
+                {
+                    "name": "📊 判定理由・テクニカル状況",
+                    "value": reasons_text,
+                    "inline": False,
+                },
+                {
+                    "name": "📈 移動平均線情報",
+                    "value": f"・25日線: `{sma25_val}` / 75日線: `{sma75_val}`",
+                    "inline": False,
+                },
+            ]
+
+            embed = {
+                "title": f"{idx}️⃣ 🔥【分析推奨銘柄】コード: {ticker}",
+                "description": f"総合スコア: **{score}点** | パターン一致度: **{sim_score}%**",
+                "color": 0x2ECC71,
+                "fields": fields,
+            }
+            embeds.append(embed)
+
+        summary_text = (
+            f"🔔 **【株式スクリーナー 現状分析テスト通知】**\n"
+            f"📅 **実行日時:** {now_str}\n"
+            f"現在のスクリーニングデータに基づく最新分析（上位{len(embeds)}件）を出力しました。\n----------------------------------------"
+        )
+        payload = {"content": summary_text, "embeds": embeds}
+
+    try:
+        res = requests.post(webhook_url, json=payload, timeout=10)
+        if res.status_code in [200, 204]:
+            return True, "Discordへのテスト通知送信が成功しました！"
+        else:
+            return False, f"送信失敗 (Status Code: {res.status_code}): {res.text}"
+    except Exception as e:
+        return False, f"通信エラーが発生しました: {e}"
 
 
 # ---------------------------------------------------------
@@ -79,6 +182,55 @@ if now_jst.weekday() < 5 and now_jst.time() >= time(8, 30) and now_jst.time() < 
 
 # 8:30のタイミングを検知するためのバックグラウンド監視タイマー（60秒おき）
 st_autorefresh(interval=60 * 1000, key="morning_830_checker")
+
+
+# =========================================================
+# サイドバー最上部：🔔 テスト通知（現状分析をDiscordに送信）
+# =========================================================
+st.sidebar.header("⚡ アクション / テスト機能")
+
+# 現在読み込まれているデータ（ファイルが存在しない場合はサンプル）を準備
+csv_files = glob.glob("results/*.csv")
+if csv_files:
+    latest_file = sorted(csv_files, reverse=True)[0]
+    try:
+        df_for_discord = pd.read_csv(latest_file)
+    except Exception:
+        df_for_discord = pd.DataFrame()
+else:
+    df_for_discord = pd.DataFrame({
+        "Ticker": ["7203.T", "6758.T", "8306.T"],
+        "銘柄名": ["トヨタ自動車", "ソニーグループ", "三菱UFJ"],
+        "株価": [2650.0, 13200.0, 1580.0],
+        "Stop_Loss": [2544.0, 12672.0, 1516.8],
+        "Take_Profit": [2809.0, 13992.0, 1674.8],
+        "RR_Ratio": [1.5, 1.5, 1.5],
+        "Score": [92.5, 88.0, 85.1],
+        "PatternSimilarity": [89.2, 82.5, 78.0],
+        "PatternName": ["【パターン1】高値更新後の浅い押し目", "【パターン2】標準的な押し目からの再上昇初動", "【パターン2】標準的な押し目からの再上昇初動"],
+    })
+
+# Webhook URL入力フィールド（アコーディオン）
+with st.sidebar.expander("⚙️ Discord Webhook 設定", expanded=False):
+    custom_webhook_url = st.text_input(
+        "Discord Webhook URL",
+        value=DISCORD_WEBHOOK_URL if "YOUR_WEBHOOK_URL_HERE" not in DISCORD_WEBHOOK_URL else "",
+        placeholder="https://discord.com/api/webhooks/...",
+        type="password"
+    )
+
+effective_webhook_url = custom_webhook_url if custom_webhook_url.strip() else DISCORD_WEBHOOK_URL
+
+# テスト通知ボタン
+if st.sidebar.button("🔔 今すぐDiscordにテスト通知を送る", type="primary", use_container_width=True):
+    with st.spinner("Discordへ最新の分析内容を送信中..."):
+        success, msg = send_current_analysis_to_discord(df_for_discord, effective_webhook_url)
+        if success:
+            st.sidebar.success(msg)
+        else:
+            st.sidebar.error(msg)
+
+st.sidebar.markdown("---")
 
 
 # ---------------------------------------------------------
@@ -185,8 +337,6 @@ roe_min = st.sidebar.number_input("ROE の下限 (%)", min_value=0.0, max_value=
 # ---------------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("📁 データ選択")
-
-csv_files = glob.glob("results/*.csv")
 
 if csv_files:
     selected_file = st.sidebar.selectbox(
