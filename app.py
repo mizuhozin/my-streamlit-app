@@ -26,7 +26,7 @@ st.caption(
 # 日本時間 (JST: UTC+9) の定義
 JST = timezone(timedelta(hours=9))
 
-# 環境変数からDiscord Webhook URLを取得（未設定時のデフォルト）
+# 環境変数からDiscord Webhook URLを取得
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL") or "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE"
 
 
@@ -39,10 +39,10 @@ def safe_rerun():
 
 
 # ---------------------------------------------------------
-# Discord通知送信処理
+# Discord通知送信処理（ダウ理論基準・銘柄名付き・移動平均線除外）
 # ---------------------------------------------------------
 def send_current_analysis_to_discord(df_data, webhook_url):
-    """現在の分析結果データ（上位銘柄）を定時送信と同じ形式でDiscordへ即座に送信"""
+    """現在の分析結果データ（上位銘柄）を東証番号＋銘柄名付きでDiscordへ即座に送信"""
     if not webhook_url or "YOUR_WEBHOOK_URL_HERE" in webhook_url:
         return False, "Discord Webhook URLが設定されていません。サイドバーのURL設定をご確認ください。"
 
@@ -53,12 +53,12 @@ def send_current_analysis_to_discord(df_data, webhook_url):
             "content": f"🔔 **【株式スクリーナー 手動テスト通知 ({now_str})】**\n現在分析可能な推奨銘柄はありませんでした。"
         }
     else:
-        # 上位5件に絞り込み
         top_df = df_data.head(5)
         embeds = []
 
         for idx, (_, row) in enumerate(top_df.iterrows(), 1):
             ticker = str(row.get("Ticker", row.get("銘柄コード", "----"))).replace(".T", "")
+            name = str(row.get("銘柄名", ticker))
             price = float(row.get("株価", row.get("Close", 0.0)))
             stop_loss = float(row.get("Stop_Loss", price * 0.96))
             take_profit = float(row.get("Take_Profit", price * 1.06))
@@ -70,20 +70,15 @@ def send_current_analysis_to_discord(df_data, webhook_url):
             sl_pct = -((price - stop_loss) / price * 100) if price > 0 else 0.0
             tp_pct = ((take_profit - price) / price * 100) if price > 0 else 0.0
 
-            # テクニカル情報・理由の解析
+            # テクニカル情報・ダウ理論判定理由の解析
             tech_raw = row.get("TechnicalInfo", None)
-            reasons_text = "・25日・75日移動平均線に基づき良好なトレンドを維持"
-            sma25_val = "----"
-            sma75_val = "----"
+            reasons_text = "・ダウ理論に基づく高値・安値の切り上げ上昇傾向を確認"
 
             if pd.notna(tech_raw):
                 try:
                     tech_dict = json.loads(tech_raw) if isinstance(tech_raw, str) else tech_raw
-                    if isinstance(tech_dict, dict):
-                        if "reasons" in tech_dict and tech_dict["reasons"]:
-                            reasons_text = "\n".join(tech_dict["reasons"])
-                        sma25_val = f"¥{tech_dict.get('sma25', '----'):,}" if tech_dict.get('sma25') else "----"
-                        sma75_val = f"¥{tech_dict.get('sma75', '----'):,}" if tech_dict.get('sma75') else "----"
+                    if isinstance(tech_dict, dict) and "reasons" in tech_dict and tech_dict["reasons"]:
+                        reasons_text = "\n".join(tech_dict["reasons"])
                 except Exception:
                     pass
 
@@ -100,19 +95,14 @@ def send_current_analysis_to_discord(df_data, webhook_url):
                     "inline": False,
                 },
                 {
-                    "name": "📊 判定理由・テクニカル状況",
+                    "name": "📊 ダウ理論トレンド判定理由",
                     "value": reasons_text,
-                    "inline": False,
-                },
-                {
-                    "name": "📈 移動平均線情報",
-                    "value": f"・25日線: `{sma25_val}` / 75日線: `{sma75_val}`",
                     "inline": False,
                 },
             ]
 
             embed = {
-                "title": f"{idx}️⃣ 🔥【分析推奨銘柄】コード: {ticker}",
+                "title": f"{idx}️⃣ 🔥 [{ticker}] {name}",
                 "description": f"総合スコア: **{score}点** | パターン一致度: **{sim_score}%**",
                 "color": 0x2ECC71,
                 "fields": fields,
@@ -151,7 +141,6 @@ if "watchlist" not in st.session_state:
         {"Ticker": "9432.T", "銘柄名": "NTT", "メモ": "保有: 30株 / 通信ディフェンシブ"},
     ]
 
-# 朝8:30の自動更新フラグ管理
 if "last_830_refreshed_date" not in st.session_state:
     st.session_state.last_830_refreshed_date = ""
 
@@ -174,13 +163,11 @@ def is_market_open():
 now_jst = datetime.now(JST)
 today_str = now_jst.strftime("%Y-%m-%d")
 
-# 平日かつ朝8:30〜8:31の間隔内で、まだ本日実行されていない場合にリフレッシュ
 if now_jst.weekday() < 5 and now_jst.time() >= time(8, 30) and now_jst.time() < time(8, 31):
     if st.session_state.last_830_refreshed_date != today_str:
         st.session_state.last_830_refreshed_date = today_str
         safe_rerun()
 
-# 8:30のタイミングを検知するためのバックグラウンド監視タイマー（60秒おき）
 st_autorefresh(interval=60 * 1000, key="morning_830_checker")
 
 
@@ -189,7 +176,6 @@ st_autorefresh(interval=60 * 1000, key="morning_830_checker")
 # =========================================================
 st.sidebar.header("⚡ アクション / テスト機能")
 
-# 現在読み込まれているデータ（ファイルが存在しない場合はサンプル）を準備
 csv_files = glob.glob("results/*.csv")
 if csv_files:
     latest_file = sorted(csv_files, reverse=True)[0]
@@ -210,7 +196,6 @@ else:
         "PatternName": ["【パターン1】高値更新後の浅い押し目", "【パターン2】標準的な押し目からの再上昇初動", "【パターン2】標準的な押し目からの再上昇初動"],
     })
 
-# Webhook URL入力フィールド（アコーディオン）
 with st.sidebar.expander("⚙️ Discord Webhook 設定", expanded=False):
     custom_webhook_url = st.text_input(
         "Discord Webhook URL",
@@ -221,7 +206,6 @@ with st.sidebar.expander("⚙️ Discord Webhook 設定", expanded=False):
 
 effective_webhook_url = custom_webhook_url if custom_webhook_url.strip() else DISCORD_WEBHOOK_URL
 
-# テスト通知ボタン
 if st.sidebar.button("🔔 今すぐDiscordにテスト通知を送る", type="primary", use_container_width=True):
     with st.spinner("Discordへ最新の分析内容を送信中..."):
         success, msg = send_current_analysis_to_discord(df_for_discord, effective_webhook_url)
@@ -417,9 +401,6 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
 
         filtered_df = df_raw.copy()
 
-        # ---------------------------------------------------------
-        # ファンダメンタルズ条件のフィルタリング適用 (ONになっている項目のみ)
-        # ---------------------------------------------------------
         active_conditions = []
         if use_per and "PER" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["PER"] <= per_max]
@@ -469,7 +450,6 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
     st.subheader("🌐 ファンダメンタル的予想銘柄リスト（テーマ別分析）")
     st.caption("ロイター等のマクロ報道、金融政策、産業トレンド、地政学動向から注目される主要テーマと代表銘柄です。")
 
-    # テーマ選択用ドロップダウン
     selected_theme = st.selectbox(
         "表示するファンダメンタル・テーマを選択してください:",
         [
@@ -484,7 +464,6 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
         ],
     )
 
-    # テーマ別データ定義
     theme_data = {
         "1. 医療・バイオ・ヘルスケア": {
             "df": pd.DataFrame({
@@ -602,7 +581,6 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
         },
     }
 
-    # ドロップダウンの選択結果に応じて表示切り替え
     for theme_name, content in theme_data.items():
         if selected_theme == "すべてのテーマを表示" or selected_theme == theme_name:
             with st.expander(f"📌 {theme_name}", expanded=(selected_theme != "すべてのテーマを表示")):
@@ -638,18 +616,11 @@ elif menu_selection == "⭐ マイ・ウォッチリスト":
         st.markdown("##### ➕ 新しい銘柄を登録")
         col_a, col_b, col_c, col_d = st.columns([2, 3, 4, 2])
         with col_a:
-            new_ticker = st.text_input(
-                "銘柄コード (例: 9984.T)", placeholder="9984.T"
-            )
+            new_ticker = st.text_input("銘柄コード (例: 9984.T)", placeholder="9984.T")
         with col_b:
-            new_name = st.text_input(
-                "銘柄名 (例: ソフトバンクG)", placeholder="ソフトバンクG"
-            )
+            new_name = st.text_input("銘柄名 (例: ソフトバンクG)", placeholder="ソフトバンクG")
         with col_c:
-            new_memo = st.text_input(
-                "メモ (例: 保有10株 / ディフェンシブ)",
-                placeholder="メモを入力",
-            )
+            new_memo = st.text_input("メモ (例: 保有10株 / ディフェンシブ)", placeholder="メモを入力")
         with col_d:
             st.write("")
             st.write("")
@@ -658,9 +629,7 @@ elif menu_selection == "⭐ マイ・ウォッチリスト":
         if submit_btn:
             if new_ticker.strip():
                 formatted_ticker = new_ticker.strip().upper()
-                existing_tickers = [
-                    item["Ticker"] for item in st.session_state.watchlist
-                ]
+                existing_tickers = [item["Ticker"] for item in st.session_state.watchlist]
                 if formatted_ticker in existing_tickers:
                     st.error(f"{formatted_ticker} は既にリストに存在します。")
                 else:
@@ -669,9 +638,7 @@ elif menu_selection == "⭐ マイ・ウォッチリスト":
                         "銘柄名": new_name.strip() if new_name.strip() else formatted_ticker,
                         "メモ": new_memo.strip() if new_memo.strip() else "-",
                     })
-                    st.success(
-                        f"銘柄【{formatted_ticker}】をウォッチリストに追加しました！"
-                    )
+                    st.success(f"銘柄【{formatted_ticker}】をウォッチリストに追加しました！")
                     safe_rerun()
             else:
                 st.warning("銘柄コードを入力してください。")
@@ -705,9 +672,7 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
     combined_options = []
     if st.session_state.watchlist:
         for item in st.session_state.watchlist:
-            combined_options.append(
-                f"⭐ [ウォッチ] {item['Ticker']} - {item['銘柄名']}"
-            )
+            combined_options.append(f"⭐ [ウォッチ] {item['Ticker']} - {item['銘柄名']}")
 
     if not df_raw.empty and "Ticker" in df_raw.columns:
         for _, row in df_raw.iterrows():
@@ -717,71 +682,31 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                 combined_options.append(opt)
 
     if combined_options:
-        selected_option = st.selectbox(
-            "分析する銘柄を選択してください",
-            combined_options,
-            key="select_analysis_ticker",
-        )
+        selected_option = st.selectbox("分析する銘柄を選択してください", combined_options, key="select_analysis_ticker")
         selected_ticker = selected_option.split("] ")[1].split(" - ")[0]
     else:
-        selected_ticker = st.text_input(
-            "銘柄コードを入力 (例: 7203.T)", value="7203.T"
-        )
+        selected_ticker = st.text_input("銘柄コードを入力 (例: 7203.T)", value="7203.T")
 
     col_opt1, col_opt2, col_opt3 = st.columns([2, 2, 1])
     with col_opt1:
-        timeframe_option = st.selectbox(
-            "⏱ 時間足 (ローソク足の間隔)",
-            ["日足 (1日)", "5分足", "15分足", "1時間足", "週足 (1週間)"],
-            index=0,
-        )
+        timeframe_option = st.selectbox("⏱ 時間足 (ローソク足の間隔)", ["日足 (1日)", "5分足", "15分足", "1時間足", "週足 (1週間)"], index=0)
     with col_opt2:
-        period_option = st.selectbox(
-            "📅 表示対象期間",
-            [
-                "1日 (1d)",
-                "5日 (5d)",
-                "1ヶ月 (1mo)",
-                "3ヶ月 (3mo)",
-                "6ヶ月 (6mo)",
-                "1年 (1y)",
-            ],
-            index=3,
-        )
+        period_option = st.selectbox("📅 表示対象期間", ["1日 (1d)", "5日 (5d)", "1ヶ月 (1mo)", "3ヶ月 (3mo)", "6ヶ月 (6mo)", "1年 (1y)"], index=3)
     with col_opt3:
-        rr_ratio = st.selectbox(
-            "目標リスクリワード比", [1.0, 1.5, 2.0, 2.5], index=1
-        )
+        rr_ratio = st.selectbox("目標リスクリワード比", [1.0, 1.5, 2.0, 2.5], index=1)
 
-    tf_map = {
-        "5分足": "5m",
-        "15分足": "15m",
-        "1時間足": "60m",
-        "日足 (1日)": "1d",
-        "週足 (1週間)": "1wk",
-    }
-    p_map = {
-        "1日 (1d)": "1d",
-        "5日 (5d)": "5d",
-        "1ヶ月 (1mo)": "1mo",
-        "3ヶ月 (3mo)": "3mo",
-        "6ヶ月 (6mo)": "6mo",
-        "1年 (1y)": "1y",
-    }
+    tf_map = {"5分足": "5m", "15分足": "15m", "1時間足": "60m", "日足 (1日)": "1d", "週足 (1週間)": "1wk"}
+    p_map = {"1日 (1d)": "1d", "5日 (5d)": "5d", "1ヶ月 (1mo)": "1mo", "3ヶ月 (3mo)": "3mo", "6ヶ月 (6mo)": "6mo", "1年 (1y)": "1y"}
 
     interval_val = tf_map[timeframe_option]
     period_val = p_map[period_option]
 
     if interval_val in ["5m", "15m"] and period_val in ["3mo", "6mo", "1y"]:
         period_val = "1mo"
-        st.warning(
-            "⚠️ 分足データは直近1ヶ月間（1mo）まで自動調整して取得します。"
-        )
+        st.warning("⚠️ 分足データは直近1ヶ月間（1mo）まで自動調整して取得します。")
 
     if selected_ticker:
-        with st.spinner(
-            f"{selected_ticker} ({timeframe_option}) のデータを取得中..."
-        ):
+        with st.spinner(f"{selected_ticker} ({timeframe_option}) のデータを取得中..."):
             try:
                 stock = yf.Ticker(selected_ticker)
                 hist = stock.history(period=period_val, interval=interval_val)
@@ -789,17 +714,11 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
 
                 if not hist.empty:
                     latest_close = float(hist["Close"].iloc[-1])
-                    prev_close = (
-                        float(hist["Close"].iloc[-2])
-                        if len(hist) > 1
-                        else latest_close
-                    )
+                    prev_close = float(hist["Close"].iloc[-2]) if len(hist) > 1 else latest_close
                     change = latest_close - prev_close
                     change_pct = (change / prev_close) * 100 if prev_close != 0 else 0.0
 
-                    company_name = info.get(
-                        "longName", info.get("shortName", selected_ticker)
-                    )
+                    company_name = info.get("longName", info.get("shortName", selected_ticker))
 
                     recent_df = hist.tail(20)
                     recent_low = float(recent_df["Low"].min())
@@ -809,11 +728,7 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     if np.isnan(sma20):
                         sma20 = latest_close
 
-                    sma50 = (
-                        float(hist["Close"].rolling(window=50).mean().iloc[-1])
-                        if len(hist) >= 50
-                        else sma20
-                    )
+                    sma50 = float(hist["Close"].rolling(window=50).mean().iloc[-1]) if len(hist) >= 50 else sma20
                     if np.isnan(sma50):
                         sma50 = sma20
 
@@ -852,38 +767,18 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     with c1:
                         st.metric("選択中の銘柄", company_name)
                     with c2:
-                        st.metric(
-                            "最新株価",
-                            f"¥{latest_close:,.1f}",
-                            f"{change:+.1f} ({change_pct:+.2f}%)",
-                        )
+                        st.metric("最新株価", f"¥{latest_close:,.1f}", f"{change:+.1f} ({change_pct:+.2f}%)")
                     with c3:
                         st.metric("ダウ理論・トレンド判定", trend_status)
 
-                    st.markdown(
-                        "#### ⚡ YTT風・自動売買ラインナビ (トレンド順張り対応)"
-                    )
+                    st.markdown("#### ⚡ YTT風・自動売買ラインナビ (トレンド順張り対応)")
                     ytt1, ytt2, ytt3, ytt4 = st.columns(4)
                     with ytt1:
-                        st.metric(
-                            "推奨エントリー",
-                            f"¥{latest_close:,.1f}",
-                            delta=f"戦略: {entry_side_label}",
-                            delta_color="off",
-                        )
+                        st.metric("推奨エントリー", f"¥{latest_close:,.1f}", delta=f"戦略: {entry_side_label}", delta_color="off")
                     with ytt2:
-                        st.metric(
-                            sl_label,
-                            f"¥{stop_loss:,.1f}",
-                            delta=sl_delta_text,
-                            delta_color="inverse",
-                        )
+                        st.metric(sl_label, f"¥{stop_loss:,.1f}", delta=sl_delta_text, delta_color="inverse")
                     with ytt3:
-                        st.metric(
-                            f"目標利確 (TP) [RR {rr_ratio}]",
-                            f"¥{take_profit:,.1f}",
-                            delta=tp_delta_text,
-                        )
+                        st.metric(f"目標利確 (TP) [RR {rr_ratio}]", f"¥{take_profit:,.1f}", delta=tp_delta_text)
                     with ytt4:
                         st.metric("想定リスクリワード", f"1 : {rr_ratio}")
 
@@ -891,63 +786,19 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     hist["SMA50"] = hist["Close"].rolling(window=50).mean()
 
                     fig_stock = go.Figure()
-                    fig_stock.add_trace(
-                        go.Candlestick(
-                            x=hist.index,
-                            open=hist["Open"],
-                            high=hist["High"],
-                            low=hist["Low"],
-                            close=hist["Close"],
-                            name="株価",
-                        )
-                    )
-                    fig_stock.add_trace(
-                        go.Scatter(
-                            x=hist.index,
-                            y=hist["SMA20"],
-                            mode="lines",
-                            name="20本移動平均",
-                            line=dict(color="orange", width=1.5),
-                        )
-                    )
-                    fig_stock.add_trace(
-                        go.Scatter(
-                            x=hist.index,
-                            y=hist["SMA50"],
-                            mode="lines",
-                            name="50本移動平均",
-                            line=dict(color="blue", width=1.5),
-                        )
-                    )
+                    fig_stock.add_trace(go.Candlestick(x=hist.index, open=hist["Open"], high=hist["High"], low=hist["Low"], close=hist["Close"], name="株価"))
+                    fig_stock.add_trace(go.Scatter(x=hist.index, y=hist["SMA20"], mode="lines", name="20本移動平均", line=dict(color="orange", width=1.5)))
+                    fig_stock.add_trace(go.Scatter(x=hist.index, y=hist["SMA50"], mode="lines", name="50本移動平均", line=dict(color="blue", width=1.5)))
 
                     tp_color = "green" if trend_type == "BULL" else "red"
                     sl_color = "red" if trend_type == "BULL" else "green"
 
-                    fig_stock.add_hline(
-                        y=take_profit,
-                        line_dash="dash",
-                        line_color=tp_color,
-                        annotation_text=f"利確目標 (TP): ¥{take_profit:,.1f}",
-                    )
-                    fig_stock.add_hline(
-                        y=latest_close,
-                        line_dash="dot",
-                        line_color="blue",
-                        annotation_text=f"現在地/エントリー: ¥{latest_close:,.1f}",
-                    )
-                    fig_stock.add_hline(
-                        y=stop_loss,
-                        line_dash="dash",
-                        line_color=sl_color,
-                        annotation_text=f"損切り (SL): ¥{stop_loss:,.1f}",
-                    )
+                    fig_stock.add_hline(y=take_profit, line_dash="dash", line_color=tp_color, annotation_text=f"利確目標 (TP): ¥{take_profit:,.1f}")
+                    fig_stock.add_hline(y=latest_close, line_dash="dot", line_color="blue", annotation_text=f"現在地/エントリー: ¥{latest_close:,.1f}")
+                    fig_stock.add_hline(y=stop_loss, line_dash="dash", line_color=sl_color, annotation_text=f"損切り (SL): ¥{stop_loss:,.1f}")
 
                     fig_stock.update_layout(
-                        title=(
-                            f"{selected_ticker} のローソク足チャート"
-                            f" ({timeframe_option}) & YTT売買ライン"
-                            f" [{entry_side_label}]"
-                        ),
+                        title=f"{selected_ticker} のローソク足チャート ({timeframe_option}) & YTT売買ライン [{entry_side_label}]",
                         yaxis_title="株価 (JPY)",
                         xaxis_rangeslider_visible=False,
                         height=540,
@@ -955,9 +806,7 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                     )
                     st.plotly_chart(fig_stock, use_container_width=True)
                 else:
-                    st.error(
-                        f"{selected_ticker} のデータが見つかりませんでした。"
-                    )
+                    st.error(f"{selected_ticker} のデータが見つかりませんでした。")
             except Exception as e:
                 st.error(f"データ取得中にエラーが発生しました: {e}")
 
@@ -967,66 +816,29 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
 elif menu_selection == "📊 デモ取引・バックテストシミュレーション":
     st.subheader("📊 取引シミュレーション & バックテスト")
 
-    horizon_mode = st.radio(
-        "🎯 投資目線（検証スパン）の選択",
-        [
-            "⚡ 短期トレード目線 (日次スイング)",
-            "🏛️ 中長期投資目線 (月次・トレンド重視)",
-        ],
-        horizontal=True,
-    )
+    horizon_mode = st.radio("🎯 投資目線（検証スパン）の選択", ["⚡ 短期トレード目線 (日次スイング)", "🏛️ 中長期投資目線 (月次・トレンド重視)"], horizontal=True)
 
     st.markdown("---")
 
     col_param1, col_param2, col_param3, col_param4 = st.columns(4)
     with col_param1:
-        initial_capital = st.number_input(
-            "初期投資金額 (JPY)",
-            min_value=100_000,
-            max_value=10_000_000,
-            value=1_000_000,
-            step=100_000,
-        )
+        initial_capital = st.number_input("初期投資金額 (JPY)", min_value=100_000, max_value=10_000_000, value=1_000_000, step=100_000)
     with col_param2:
-        take_profit_pct = (
-            st.slider(
-                "目標利確ライン (Take Profit %)",
-                min_value=1.0,
-                max_value=30.0,
-                value=8.0 if "短期" in horizon_mode else 15.0,
-                step=0.5,
-            )
-            / 100.0
-        )
+        take_profit_pct = st.slider("目標利確ライン (Take Profit %)", min_value=1.0, max_value=30.0, value=8.0 if "短期" in horizon_mode else 15.0, step=0.5) / 100.0
     with col_param3:
-        stop_loss_pct = (
-            st.slider(
-                "損切りライン (Stop Loss %)",
-                min_value=1.0,
-                max_value=15.0,
-                value=3.0 if "短期" in horizon_mode else 5.0,
-                step=0.5,
-            )
-            / 100.0
-        )
+        stop_loss_pct = st.slider("損切りライン (Stop Loss %)", min_value=1.0, max_value=15.0, value=3.0 if "短期" in horizon_mode else 5.0, step=0.5) / 100.0
     with col_param4:
         if "短期" in horizon_mode:
-            simulation_period = st.slider(
-                "検証期間 (営業日)", min_value=10, max_value=120, value=60, step=5
-            )
+            simulation_period = st.slider("検証期間 (営業日)", min_value=10, max_value=120, value=60, step=5)
             fetch_period = "6mo"
         else:
-            simulation_period = st.slider(
-                "検証期間 (ヶ月)", min_value=3, max_value=36, value=12, step=3
-            )
+            simulation_period = st.slider("検証期間 (ヶ月)", min_value=3, max_value=36, value=12, step=3)
             fetch_period = "3y"
 
     sim_ticker_options = []
     if st.session_state.watchlist:
         for item in st.session_state.watchlist:
-            sim_ticker_options.append(
-                f"⭐ [ウォッチ] {item['Ticker']} - {item['銘柄名']}"
-            )
+            sim_ticker_options.append(f"⭐ [ウォッチ] {item['Ticker']} - {item['銘柄名']}")
     if not df_raw.empty and "Ticker" in df_raw.columns:
         for _, row in df_raw.iterrows():
             name = row.get("銘柄名", row["Ticker"])
@@ -1035,9 +847,7 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
                 sim_ticker_options.append(opt)
 
     if sim_ticker_options:
-        selected_sim_opt = st.selectbox(
-            "バックテスト対象銘柄の選択", sim_ticker_options
-        )
+        selected_sim_opt = st.selectbox("バックテスト対象銘柄の選択", sim_ticker_options)
         sim_ticker = selected_sim_opt.split("] ")[1].split(" - ")[0]
     else:
         sim_ticker = st.text_input("銘柄コードを入力", value="7203.T")
@@ -1062,25 +872,21 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
                         high_price = row["High"]
                         low_price = row["Low"]
 
-                        # エントリー判定 (ポジションがない場合)
                         if position == 0:
                             position = int(capital // close_price)
                             if position > 0:
                                 entry_price = close_price
                                 capital -= position * entry_price
 
-                        # ポジション保有中の利確 / 損切り判定
                         elif position > 0:
                             tp_price = entry_price * (1 + take_profit_pct)
                             sl_price = entry_price * (1 - stop_loss_pct)
 
-                            # 利確判定
                             if high_price >= tp_price:
                                 capital += position * tp_price
                                 profit = position * (tp_price - entry_price)
                                 trade_history.append({"日付": idx.strftime('%Y-%m-%d'), "種別": "利確", "価格": tp_price, "損益": profit})
                                 position = 0
-                            # 損切り判定
                             elif low_price <= sl_price:
                                 capital += position * sl_price
                                 loss = position * (sl_price - entry_price)
@@ -1090,7 +896,6 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
                         current_val = capital + (position * close_price)
                         capital_curve.append(current_val)
 
-                    # 最終日でのポジション手仕舞い評価
                     final_val = capital + (position * df_sim["Close"].iloc[-1])
                     total_return = ((final_val - initial_capital) / initial_capital) * 100
 
@@ -1102,16 +907,8 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
                     with c_res3:
                         st.metric("総取引数", f"{len(trade_history)} 回")
 
-                    # 資産推移グラフの作成
                     fig_curve = go.Figure()
-                    fig_curve.add_trace(
-                        go.Scatter(
-                            y=capital_curve,
-                            mode="lines+markers",
-                            name="総資産額 (JPY)",
-                            line=dict(color="#00CC96", width=2),
-                        )
-                    )
+                    fig_curve.add_trace(go.Scatter(y=capital_curve, mode="lines+markers", name="総資産額 (JPY)", line=dict(color="#00CC96", width=2)))
                     fig_curve.update_layout(
                         title=f"{sim_ticker} バックテスト期間中の資産推移",
                         xaxis_title="経過日数/ステップ",
