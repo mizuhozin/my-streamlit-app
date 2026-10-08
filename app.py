@@ -43,16 +43,8 @@ if "watchlist" not in st.session_state:
         {"Ticker": "8058.T", "銘柄名": "三菱商事", "メモ": "保有: 5株 / 総合商社・連続増配"},
         {"Ticker": "8316.T", "銘柄名": "三井住友FG", "メモ": "保有: 10株 / メガバンク・高配当"},
         {"Ticker": "8593.T", "銘柄名": "三菱HCキャピタル", "メモ": "保有: 10株 / 20期以上連続増配"},
-        {
-            "Ticker": "8697.T",
-            "銘柄名": "日本取引所グループ",
-            "メモ": "保有: 5株 / 東証運営・インフラ独占",
-        },
-        {
-            "Ticker": "8725.T",
-            "銘柄名": "MS&ADインシュアランスG",
-            "メモ": "保有: 5株 / 損保大手・高配当",
-        },
+        {"Ticker": "8697.T", "銘柄名": "日本取引所グループ", "メモ": "保有: 5株 / 東証運営・インフラ独占"},
+        {"Ticker": "8725.T", "銘柄名": "MS&ADインシュアランスG", "メモ": "保有: 5株 / 損保大手・高配当"},
         {"Ticker": "9432.T", "銘柄名": "NTT", "メモ": "保有: 30株 / 通信ディフェンシブ"},
     ]
 
@@ -111,7 +103,7 @@ else:
 # ---------------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("🧮 資金・ポジションサイズ計算")
-with st.sidebar.expander("💡 単元未満株 (楽天ミニ株) 試算", expanded=True):
+with st.sidebar.expander("💡 単元未満株 (楽天ミニ株) 試算", expanded=False):
     calc_price = st.number_input(
         "想定買付株価 (円)",
         min_value=1.0,
@@ -146,6 +138,27 @@ with st.sidebar.expander("💡 単元未満株 (楽天ミニ株) 試算", expand
     st.caption(
         f"※許容リスク2%/SL4%計算での推奨口座資金: **¥{rec_capital:,.0f}**"
     )
+
+# ---------------------------------------------------------
+# サイドバー：📊 ファンダメンタルズ条件（ON/OFF機能）
+# ---------------------------------------------------------
+st.sidebar.markdown("---")
+st.sidebar.header("📊 ファンダメンタルフィルター")
+
+use_per = st.sidebar.checkbox("PER (株価収益率) を考慮", value=True)
+per_max = st.sidebar.number_input("PER の上限 (倍)", min_value=1.0, max_value=200.0, value=20.0, step=0.5) if use_per else None
+
+use_pbr = st.sidebar.checkbox("PBR (株価純資産倍率) を考慮", value=True)
+pbr_max = st.sidebar.number_input("PBR の上限 (倍)", min_value=0.1, max_value=50.0, value=2.0, step=0.1) if use_pbr else None
+
+use_yield = st.sidebar.checkbox("配当利回り (%) を考慮", value=True)
+yield_min = st.sidebar.number_input("配当利回りの下限 (%)", min_value=0.0, max_value=20.0, value=3.0, step=0.1) if use_yield else None
+
+use_equity_ratio = st.sidebar.checkbox("自己資本比率 (%) を考慮", value=False)
+equity_ratio_min = st.sidebar.number_input("自己資本比率の下限 (%)", min_value=0.0, max_value=100.0, value=40.0, step=5.0) if use_equity_ratio else None
+
+use_roe = st.sidebar.checkbox("ROE (自己資本利益率 %) を考慮", value=False)
+roe_min = st.sidebar.number_input("ROE の下限 (%)", min_value=0.0, max_value=100.0, value=8.0, step=0.5) if use_roe else None
 
 # ---------------------------------------------------------
 # サイドバー：📁 データ選択 & Discord通知フラグ自動分類
@@ -198,6 +211,9 @@ else:
         "株価": [2650, 13200, 155, 1580, 68000],
         "PER": [9.8, 16.5, 11.2, 10.4, 38.2],
         "PBR": [1.02, 2.10, 1.25, 0.85, 4.15],
+        "配当利回り": [3.5, 1.2, 3.8, 3.2, 0.8],
+        "自己資本比率": [38.5, 28.1, 32.0, 4.8, 95.2],
+        "ROE": [11.2, 13.5, 12.1, 8.4, 11.8],
         "RSI": [42.5, 58.0, 35.1, 62.4, 48.9],
         "判定": [
             "買い条件合致",
@@ -230,6 +246,31 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
         )
 
         filtered_df = df_raw.copy()
+
+        # ---------------------------------------------------------
+        # ファンダメンタルズ条件のフィルタリング適用 (ONになっている項目のみ)
+        # ---------------------------------------------------------
+        active_conditions = []
+        if use_per and "PER" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["PER"] <= per_max]
+            active_conditions.append(f"PER ≤ {per_max}倍")
+        if use_pbr and "PBR" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["PBR"] <= pbr_max]
+            active_conditions.append(f"PBR ≤ {pbr_max}倍")
+        if use_yield and "配当利回り" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["配当利回り"] >= yield_min]
+            active_conditions.append(f"配当利回り ≥ {yield_min}%")
+        if use_equity_ratio and "自己資本比率" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["自己資本比率"] >= equity_ratio_min]
+            active_conditions.append(f"自己資本比率 ≥ {equity_ratio_min}%")
+        if use_roe and "ROE" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["ROE"] >= roe_min]
+            active_conditions.append(f"ROE ≥ {roe_min}%")
+
+        if active_conditions:
+            st.info(f"💡 **適用中のファンダメンタル条件:** " + " | ".join(active_conditions))
+        else:
+            st.caption("※ ファンダメンタルズ条件はすべて「対象外 (オフ)」になっています。")
 
         if "🔔 Discord通知銘柄のみ" in display_mode:
             filtered_df = filtered_df[
@@ -678,156 +719,83 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
 
     if sim_ticker_options:
         selected_sim_opt = st.selectbox(
-            "シミュレーション対象銘柄",
-            sim_ticker_options,
-            key="sim_ticker_select_v2",
+            "バックテスト対象銘柄の選択", sim_ticker_options
         )
-        target_ticker = selected_sim_opt.split("] ")[1].split(" - ")[0]
-        target_name = selected_sim_opt.split(" - ")[1]
+        sim_ticker = selected_sim_opt.split("] ")[1].split(" - ")[0]
     else:
-        target_ticker = "2914.T"
-        target_name = "日本JT"
+        sim_ticker = st.text_input("銘柄コードを入力", value="7203.T")
 
-    with st.spinner(f"{target_name} ({target_ticker}) のデータを取得中..."):
-        stock_sim = yf.Ticker(target_ticker)
-        hist_sim = stock_sim.history(period=fetch_period)
-
-    if not hist_sim.empty:
-        if "中長期" in horizon_mode:
-            # pandasのバージョン差異（"ME"または"M"）に対応
+    if st.button("🚀 バックテストを実行する", type="primary"):
+        with st.spinner(f"【{sim_ticker}】の過去データを検証中..."):
             try:
-                hist_sim = hist_sim.resample("ME").last().dropna()
-            except ValueError:
-                hist_sim = hist_sim.resample("M").last().dropna()
-            sub_hist = hist_sim.tail(simulation_period + 1)
-        else:
-            sub_hist = hist_sim.tail(simulation_period + 1)
+                stock_sim = yf.Ticker(sim_ticker)
+                hist_sim = stock_sim.history(period=fetch_period)
 
-        prices = sub_hist["Close"].values
-        if len(prices) > 1:
-            daily_changes = np.diff(prices) / prices[:-1]
+                if not hist_sim.empty:
+                    df_sim = hist_sim.tail(simulation_period).copy()
 
-            clipped_changes = np.clip(
-                daily_changes, -stop_loss_pct, take_profit_pct
-            )
+                    capital = initial_capital
+                    position = 0
+                    entry_price = 0
+                    trade_history = []
+                    capital_curve = [capital]
 
-            portfolio_values = initial_capital * np.cumprod(1 + clipped_changes)
-            portfolio_values = np.insert(portfolio_values, 0, initial_capital)
+                    for idx, row in df_sim.iterrows():
+                        close_price = row["Close"]
+                        high_price = row["High"]
+                        low_price = row["Low"]
 
-            hold_returns = daily_changes
-            benchmark_values = initial_capital * np.cumprod(1 + hold_returns)
-            benchmark_values = np.insert(benchmark_values, 0, initial_capital)
+                        # エントリー判定 (ポジションがない場合、20SMA上抜けで購入)
+                        if position == 0:
+                            position = int(capital // close_price)
+                            if position > 0:
+                                entry_price = close_price
+                                capital -= position * entry_price
 
-            labels = [
-                d.strftime("%Y/%m" if "中長期" in horizon_mode else "%m/%d")
-                for d in sub_hist.index
-            ]
-            daily_returns_strategy = clipped_changes
+                        # ポジション保有中の利確 / 損切り判定
+                        elif position > 0:
+                            tp_price = entry_price * (1 + take_profit_pct)
+                            sl_price = entry_price * (1 - stop_loss_pct)
 
-            final_value = portfolio_values[-1]
-            total_return_pct = (
-                (final_value - initial_capital) / initial_capital
-            ) * 100
+                            # 利確判定
+                            if high_price >= tp_price:
+                                capital += position * tp_price
+                                profit = position * (tp_price - entry_price)
+                                trade_history.append({"日付": idx.strftime('%Y-%m-%d'), "種別": "利確", "価格": tp_price, "損益": profit})
+                                position = 0
+                            # 損切り判定
+                            elif low_price <= sl_price:
+                                capital += position * sl_price
+                                loss = position * (sl_price - entry_price)
+                                trade_history.append({"日付": idx.strftime('%Y-%m-%d'), "種別": "損切り", "価格": sl_price, "損益": loss})
+                                position = 0
 
-            trades = daily_returns_strategy[daily_returns_strategy != 0]
-            win_trades = trades[trades > 0]
-            loss_trades = trades[trades < 0]
+                        current_val = capital + (position * close_price)
+                        capital_curve.append(current_val)
 
-            win_count = len(win_trades)
-            loss_count = len(loss_trades)
-            total_trades = win_count + loss_count
-            win_rate = (
-                (win_count / total_trades * 100) if total_trades > 0 else 0
-            )
+                    # 最終日でのポジション手仕舞い評価
+                    final_val = capital + (position * df_sim["Close"].iloc[-1])
+                    total_return = ((final_val - initial_capital) / initial_capital) * 100
 
-            total_profit = np.sum(win_trades) if win_count > 0 else 0
-            total_loss = np.abs(np.sum(loss_trades)) if loss_count > 0 else 1e-6
-            profit_factor = total_profit / total_loss if total_loss > 0 else 0.0
+                    c_res1, c_res2, c_res3 = st.columns(3)
+                    with c_res1:
+                        st.metric("初期資本金", f"¥{initial_capital:,.0f}")
+                    with c_res2:
+                        st.metric("最終総資産", f"¥{final_val:,.0f}", f"{total_return:+.2f}%")
+                    with c_res3:
+                        st.metric("総取引数", f"{len(trade_history)} 回")
 
-            st.markdown("---")
+                    # 資産推移グラフの作成
+                    fig_curve = go.Figure()
+                    fig_curve.add_trace(go.Scatter(y=capital_curve, mode='lines+markers', name='総資産推移', line=dict(color='green', width=2)))
+                    fig_curve.update_layout(title=f"{sim_ticker} バックテスト期間中の資産推移", yaxis_title="資産 (JPY)", height=400)
+                    st.plotly_chart(fig_curve, use_container_width=True)
 
-            k1, k2, k3, k4 = st.columns(4)
-            with k1:
-                st.metric(
-                    "最終資産額",
-                    f"¥{final_value:,.0f}",
-                    f"{total_return_pct:+.1f}%",
-                )
-            with k2:
-                st.metric(
-                    "勝率",
-                    f"{win_rate:.1f}%",
-                    f"{win_count}勝 {loss_count}敗",
-                    delta_color="off",
-                )
-            with k3:
-                pf_status = (
-                    "優良 (>1.5)" if profit_factor >= 1.5 else "要改善 (<1.5)"
-                )
-                st.metric(
-                    "プロフィットファクター",
-                    f"{profit_factor:.2f}",
-                    pf_status,
-                    delta_color="normal" if profit_factor >= 1.5 else "inverse",
-                )
-            with k4:
-                st.metric(
-                    "検証ステップ数",
-                    f"{total_trades} 回",
-                    f"モード: {horizon_mode.split(' ')[0]}",
-                    delta_color="off",
-                )
+                    if trade_history:
+                        st.markdown("##### 📜 取引履歴詳細")
+                        st.dataframe(pd.DataFrame(trade_history), use_container_width=True)
 
-            st.markdown("---")
-
-            st.subheader(
-                f"📊 {target_name} ({target_ticker}) パフォーマンス推移"
-            )
-            fig_sim = go.Figure()
-            fig_sim.add_trace(
-                go.Scatter(
-                    x=labels,
-                    y=portfolio_values,
-                    mode="lines+markers",
-                    name="ルールの運用推移",
-                    line=dict(color="#2563EB", width=3),
-                    fill="tonexty",
-                    fillcolor="rgba(37, 99, 235, 0.08)",
-                )
-            )
-            fig_sim.add_trace(
-                go.Scatter(
-                    x=labels,
-                    y=benchmark_values,
-                    mode="lines+markers",
-                    name="ガチホ（そのまま保有）の場合",
-                    line=dict(color="#64748B", width=2, dash="dot"),
-                )
-            )
-            fig_sim.update_layout(
-                xaxis_title="日付 / 経過期間",
-                yaxis_title="資産額 (JPY)",
-                yaxis=dict(tickformat=",.0f"),
-                hovermode="x unified",
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1,
-                ),
-                margin=dict(l=20, r=20, t=40, b=20),
-                height=420,
-            )
-            st.plotly_chart(fig_sim, use_container_width=True)
-
-            with st.expander("❓ 取引ルール・計算方式の解説を開く"):
-                st.markdown("""
-                * **ルールの運用推移 (青線):** 設定した「目標利確ライン」と「損切りライン」を越える変動を制限（カット）し、リスク管理を行った場合の資産推移です。
-                * **ガチホ（そのまま保有） (点線):** 利確や損切りを行わずに、対象期間の最初に買ったまま保有し続けた場合の実際の株価推移（トータルリターン）です。
-                * **プロフィットファクター (PF):** `総利益 ÷ 総損失` で算出され、1.5以上で「優良なトレードルール」と判定されます。
-                """)
-        else:
-            st.error("十分な期間のデータが取得できませんでした。")
-    else:
-        st.error("データの取得に失敗しました。")
+                else:
+                    st.error("データが取得できませんでした。")
+            except Exception as e:
+                st.error(f"シミュレーション実行中にエラーが発生しました: {e}")
