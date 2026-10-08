@@ -1,6 +1,7 @@
 import glob
 import json
 import os
+import re
 from datetime import datetime, time, timedelta, timezone
 
 import numpy as np
@@ -439,16 +440,13 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
                 ]
 
         # ---------------------------------------------------------
-        # 🆕 ウォッチリスト追加用のチェック欄機能（st.data_editor）
+        # ウォッチリスト追加用のチェック欄機能（st.data_editor）
         # ---------------------------------------------------------
         display_df = filtered_df.copy()
-        
-        # チェック欄用の列を先頭に追加
         display_df.insert(0, "⭐ 追加", False)
 
         st.caption("💡 ウォッチリストに追加したい銘柄の「⭐ 追加」欄にチェックを入れ、下のボタンを押してください。")
 
-        # インタラクティブなデータエディタを表示
         edited_df = st.data_editor(
             display_df,
             column_config={
@@ -466,7 +464,6 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
 
         st.caption(f"該当銘柄数: {len(filtered_df)} 件")
 
-        # チェックされた銘柄をウォッチリストに追加するアクションボタン
         selected_rows = edited_df[edited_df["⭐ 追加"] == True]
         
         col_btn1, col_btn2 = st.columns([3, 7])
@@ -479,7 +476,6 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
                 for _, r in selected_rows.iterrows():
                     raw_ticker = str(r.get("Ticker", r.get("銘柄コード", ""))).strip().upper()
                     
-                    # 東証形式 (.T) の補正
                     if raw_ticker and not raw_ticker.endswith(".T") and raw_ticker.isdigit():
                         formatted_ticker = f"{raw_ticker}.T"
                     else:
@@ -510,7 +506,7 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
         st.warning("表示できるデータがありません。")
 
     # =========================================================
-    # 🌐 ファンダメンタル的予想銘柄（ドロップダウン & 表 & 根拠解説）
+    # 🌐 ファンダメンタル的予想銘柄（チェック欄＆ウォッチリスト追加対応）
     # =========================================================
     st.markdown("---")
     st.subheader("🌐 ファンダメンタル的予想銘柄リスト（テーマ別分析）")
@@ -647,10 +643,76 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
         },
     }
 
-    for theme_name, content in theme_data.items():
+    # 各テーマの描画処理（チェック欄＋追加ボタン対応）
+    for idx, (theme_name, content) in enumerate(theme_data.items()):
         if selected_theme == "すべてのテーマを表示" or selected_theme == theme_name:
             with st.expander(f"📌 {theme_name}", expanded=(selected_theme != "すべてのテーマを表示")):
-                st.dataframe(content["df"], use_container_width=True)
+                theme_df = content["df"].copy()
+                theme_df.insert(0, "⭐ 追加", False)
+
+                edited_theme_df = st.data_editor(
+                    theme_df,
+                    column_config={
+                        "⭐ 追加": st.column_config.CheckboxColumn(
+                            "⭐ 追加",
+                            help="チェックを入れた銘柄をマイ・ウォッチリストへ追加します",
+                            default=False,
+                        )
+                    },
+                    disabled=[col for col in theme_df.columns if col != "⭐ 追加"],
+                    hide_index=True,
+                    use_container_width=True,
+                    key=f"theme_table_editor_{idx}",
+                )
+
+                # チェックされた行の処理
+                selected_theme_rows = edited_theme_df[edited_theme_df["⭐ 追加"] == True]
+                
+                col_t_btn1, col_t_btn2 = st.columns([3, 7])
+                with col_t_btn1:
+                    if st.button(
+                        f"⭐ チェック銘柄をウォッチリストに追加",
+                        key=f"btn_add_theme_{idx}",
+                        type="primary",
+                        disabled=selected_theme_rows.empty,
+                    ):
+                        added_cnt = 0
+                        skip_cnt = 0
+                        existing_tickers = [item["Ticker"] for item in st.session_state.watchlist]
+
+                        for _, r in selected_theme_rows.iterrows():
+                            # コード列または対象/コード列から銘柄コードを取得
+                            raw_code = str(r.get("コード", r.get("対象/コード", ""))).strip()
+                            
+                            # 4桁数値＋.Tの抽出（例: 8306.T (三菱UFJ) -> 8306.T）
+                            match = re.search(r"\d{4}(\.T)?", raw_code)
+                            if match:
+                                code_found = match.group(0)
+                                formatted_ticker = code_found if code_found.endswith(".T") else f"{code_found}.T"
+                            else:
+                                formatted_ticker = raw_code.split()[0]
+
+                            ticker_name = str(r.get("銘柄名", formatted_ticker)).strip()
+
+                            if formatted_ticker in existing_tickers:
+                                skip_cnt += 1
+                            elif formatted_ticker.endswith(".T"):
+                                st.session_state.watchlist.append({
+                                    "Ticker": formatted_ticker,
+                                    "銘柄名": ticker_name if ticker_name else formatted_ticker,
+                                    "メモ": f"ファンダメンタル[{theme_name.split('.')[1] if '.' in theme_name else theme_name}]より追加",
+                                })
+                                existing_tickers.append(formatted_ticker)
+                                added_cnt += 1
+
+                        if added_cnt > 0:
+                            st.success(f"✅ {added_cnt} 件の銘柄をマイ・ウォッチリストに追加しました！")
+                            if skip_cnt > 0:
+                                st.info(f"ℹ️ {skip_cnt} 件は既に登録済みのためスキップされました。")
+                            safe_rerun()
+                        elif skip_cnt > 0:
+                            st.warning("⚠️ 選択した銘柄はすべて既にウォッチリストに登録されています。")
+
                 st.markdown(content["reason"])
 
     st.markdown("---")
