@@ -24,6 +24,15 @@ st.caption(
 # 日本時間 (JST: UTC+9) の定義
 JST = timezone(timedelta(hours=9))
 
+
+# 安全なリターン（再描画）関数
+def safe_rerun():
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+
+
 # ---------------------------------------------------------
 # セッション状態の初期化
 # ---------------------------------------------------------
@@ -156,17 +165,15 @@ if csv_files:
             f"ファイルを読み込みました: {os.path.basename(selected_file)}"
         )
 
-        # Discord通知フラグの判定とテキスト整形
         if "Discord通知" in df_raw.columns:
             df_raw["Discord通知区分"] = df_raw["Discord通知"].apply(
                 lambda x: (
                     "🔔 Discord通知銘柄"
-                    if str(x) in ["1", "True", "1.0"]
+                    if str(x).strip().lower() in ["1", "true", "1.0"]
                     else "対象外"
                 )
             )
         else:
-            # フラグが存在しない旧ファイルの場合は上位5件を対象として自動補完
             df_raw["Discord通知区分"] = [
                 "🔔 Discord通知銘柄" if i < 5 else "対象外"
                 for i in range(len(df_raw))
@@ -216,7 +223,6 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
     st.subheader("📋 本日の自動スクリーニング推奨銘柄")
 
     if not df_raw.empty:
-        # 表示切替ラジオボタン（デフォルトはDiscord通知上位銘柄）
         display_mode = st.radio(
             "表示範囲を選択:",
             ["🔔 Discord通知銘柄のみ（上位5件）", "📂 すべてのスクリーニング銘柄"],
@@ -225,15 +231,13 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
 
         filtered_df = df_raw.copy()
 
-        # Discord通知対象フィルタリング
         if "🔔 Discord通知銘柄のみ" in display_mode:
             filtered_df = filtered_df[
                 filtered_df["Discord通知区分"] == "🔔 Discord通知銘柄"
             ]
 
-        # 判定ステータスでのセカンダリ絞り込み
         if "判定" in filtered_df.columns:
-            status_list = ["すべて"] + list(filtered_df["判定"].unique())
+            status_list = ["すべて"] + list(filtered_df["判定"].dropna().unique())
             selected_status = st.selectbox(
                 "判定ステータスでさらに絞り込み", status_list
             )
@@ -294,24 +298,23 @@ elif menu_selection == "⭐ マイ・ウォッチリスト":
             submit_btn = st.form_submit_button("リストに追加")
 
         if submit_btn:
-            if new_ticker:
+            if new_ticker.strip():
+                formatted_ticker = new_ticker.strip().upper()
                 existing_tickers = [
                     item["Ticker"] for item in st.session_state.watchlist
                 ]
-                if new_ticker.upper() in existing_tickers:
-                    st.error(f"{new_ticker} は既にリストに存在します。")
+                if formatted_ticker in existing_tickers:
+                    st.error(f"{formatted_ticker} は既にリストに存在します。")
                 else:
                     st.session_state.watchlist.append({
-                        "Ticker": new_ticker.upper(),
-                        "銘柄名": (
-                            new_name if new_name else new_ticker.upper()
-                        ),
-                        "メモ": new_memo if new_memo else "-",
+                        "Ticker": formatted_ticker,
+                        "銘柄名": new_name.strip() if new_name.strip() else formatted_ticker,
+                        "メモ": new_memo.strip() if new_memo.strip() else "-",
                     })
                     st.success(
-                        f"銘柄【{new_ticker.upper()}】をウォッチリストに追加しました！"
+                        f"銘柄【{formatted_ticker}】をウォッチリストに追加しました！"
                     )
-                    st.rerun()
+                    safe_rerun()
             else:
                 st.warning("銘柄コードを入力してください。")
 
@@ -330,7 +333,7 @@ elif menu_selection == "⭐ マイ・ウォッチリスト":
                 if st.button("🗑️ 削除", key=f"del_{idx}"):
                     st.session_state.watchlist.pop(idx)
                     st.success(f"削除しました: {item['Ticker']}")
-                    st.rerun()
+                    safe_rerun()
             st.markdown("<hr style='margin: 4px 0;'>", unsafe_allow_html=True)
     else:
         st.info("現在ウォッチリストに登録されている銘柄はありません。")
@@ -427,36 +430,41 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                 info = stock.info
 
                 if not hist.empty:
-                    latest_close = hist["Close"].iloc[-1]
+                    latest_close = float(hist["Close"].iloc[-1])
                     prev_close = (
-                        hist["Close"].iloc[-2]
+                        float(hist["Close"].iloc[-2])
                         if len(hist) > 1
                         else latest_close
                     )
                     change = latest_close - prev_close
-                    change_pct = (change / prev_close) * 100
+                    change_pct = (change / prev_close) * 100 if prev_close != 0 else 0.0
 
                     company_name = info.get(
                         "longName", info.get("shortName", selected_ticker)
                     )
 
                     recent_df = hist.tail(20)
-                    recent_low = recent_df["Low"].min()
-                    recent_high = recent_df["High"].max()
+                    recent_low = float(recent_df["Low"].min())
+                    recent_high = float(recent_df["High"].max())
 
-                    sma20 = hist["Close"].rolling(window=20).mean().iloc[-1]
+                    sma20 = float(hist["Close"].rolling(window=20).mean().iloc[-1])
+                    if np.isnan(sma20):
+                        sma20 = latest_close
+
                     sma50 = (
-                        hist["Close"].rolling(window=50).mean().iloc[-1]
+                        float(hist["Close"].rolling(window=50).mean().iloc[-1])
                         if len(hist) >= 50
                         else sma20
                     )
+                    if np.isnan(sma50):
+                        sma50 = sma20
 
                     if latest_close > sma20 > sma50:
                         trend_type = "BULL"
                         trend_status = "上昇トレンド (買い目線🟢)"
                         entry_side_label = "ロング (買い)"
                         stop_loss = recent_low * 0.995
-                        risk = latest_close - stop_loss
+                        risk = max(latest_close - stop_loss, 1.0)
                         take_profit = latest_close + (risk * rr_ratio)
                         sl_delta_text = f"-{(latest_close - stop_loss)/latest_close*100:.1f}%"
                         tp_delta_text = f"+{(take_profit - latest_close)/latest_close*100:.1f}%"
@@ -466,7 +474,7 @@ elif menu_selection == "🔍 個別銘柄 詳細分析 & YTTナビ":
                         trend_status = "下降トレンド (売り目線🔴)"
                         entry_side_label = "ショート (戻り売り)"
                         stop_loss = recent_high * 1.005
-                        risk = stop_loss - latest_close
+                        risk = max(stop_loss - latest_close, 1.0)
                         take_profit = latest_close - (risk * rr_ratio)
                         sl_delta_text = f"+{(stop_loss - latest_close)/latest_close*100:.1f}%"
                         tp_delta_text = f"-{(latest_close - take_profit)/latest_close*100:.1f}%"
@@ -686,133 +694,140 @@ elif menu_selection == "📊 デモ取引・バックテストシミュレーシ
 
     if not hist_sim.empty:
         if "中長期" in horizon_mode:
-            hist_sim = hist_sim.resample("ME").last()
+            # pandasのバージョン差異（"ME"または"M"）に対応
+            try:
+                hist_sim = hist_sim.resample("ME").last().dropna()
+            except ValueError:
+                hist_sim = hist_sim.resample("M").last().dropna()
             sub_hist = hist_sim.tail(simulation_period + 1)
         else:
             sub_hist = hist_sim.tail(simulation_period + 1)
 
         prices = sub_hist["Close"].values
-        daily_changes = np.diff(prices) / prices[:-1]
+        if len(prices) > 1:
+            daily_changes = np.diff(prices) / prices[:-1]
 
-        clipped_changes = np.clip(
-            daily_changes, -stop_loss_pct, take_profit_pct
-        )
-
-        portfolio_values = initial_capital * np.cumprod(1 + clipped_changes)
-        portfolio_values = np.insert(portfolio_values, 0, initial_capital)
-
-        hold_returns = daily_changes
-        benchmark_values = initial_capital * np.cumprod(1 + hold_returns)
-        benchmark_values = np.insert(benchmark_values, 0, initial_capital)
-
-        labels = [
-            d.strftime("%Y/%m" if "中長期" in horizon_mode else "%m/%d")
-            for d in sub_hist.index
-        ]
-        daily_returns_strategy = clipped_changes
-
-        final_value = portfolio_values[-1]
-        total_return_pct = (
-            (final_value - initial_capital) / initial_capital
-        ) * 100
-
-        trades = daily_returns_strategy[daily_returns_strategy != 0]
-        win_trades = trades[trades > 0]
-        loss_trades = trades[trades < 0]
-
-        win_count = len(win_trades)
-        loss_count = len(loss_trades)
-        total_trades = win_count + loss_count
-        win_rate = (
-            (win_count / total_trades * 100) if total_trades > 0 else 0
-        )
-
-        total_profit = np.sum(win_trades) if win_count > 0 else 0
-        total_loss = np.abs(np.sum(loss_trades)) if loss_count > 0 else 1e-6
-        profit_factor = total_profit / total_loss
-
-        st.markdown("---")
-
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            st.metric(
-                "最終資産額",
-                f"¥{final_value:,.0f}",
-                f"{total_return_pct:+.1f}%",
-            )
-        with k2:
-            st.metric(
-                "勝率",
-                f"{win_rate:.1f}%",
-                f"{win_count}勝 {loss_count}敗",
-                delta_color="off",
-            )
-        with k3:
-            pf_status = (
-                "優良 (>1.5)" if profit_factor >= 1.5 else "要改善 (<1.5)"
-            )
-            st.metric(
-                "プロフィットファクター",
-                f"{profit_factor:.2f}",
-                pf_status,
-                delta_color="normal" if profit_factor >= 1.5 else "inverse",
-            )
-        with k4:
-            st.metric(
-                "検証ステップ数",
-                f"{total_trades} 回",
-                f"モード: {horizon_mode.split(' ')[0]}",
-                delta_color="off",
+            clipped_changes = np.clip(
+                daily_changes, -stop_loss_pct, take_profit_pct
             )
 
-        st.markdown("---")
+            portfolio_values = initial_capital * np.cumprod(1 + clipped_changes)
+            portfolio_values = np.insert(portfolio_values, 0, initial_capital)
 
-        st.subheader(
-            f"📊 {target_name} ({target_ticker}) パフォーマンス推移"
-        )
-        fig_sim = go.Figure()
-        fig_sim.add_trace(
-            go.Scatter(
-                x=labels,
-                y=portfolio_values,
-                mode="lines+markers",
-                name="ルールの運用推移",
-                line=dict(color="#2563EB", width=3),
-                fill="tonexty",
-                fillcolor="rgba(37, 99, 235, 0.08)",
-            )
-        )
-        fig_sim.add_trace(
-            go.Scatter(
-                x=labels,
-                y=benchmark_values,
-                mode="lines+markers",
-                name="ガチホ（そのまま保有）の場合",
-                line=dict(color="#64748B", width=2, dash="dot"),
-            )
-        )
-        fig_sim.update_layout(
-            xaxis_title="日付 / 経過期間",
-            yaxis_title="資産額 (JPY)",
-            yaxis=dict(tickformat=",.0f"),
-            hovermode="x unified",
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1,
-            ),
-            margin=dict(l=20, r=20, t=40, b=20),
-            height=420,
-        )
-        st.plotly_chart(fig_sim, use_container_width=True)
+            hold_returns = daily_changes
+            benchmark_values = initial_capital * np.cumprod(1 + hold_returns)
+            benchmark_values = np.insert(benchmark_values, 0, initial_capital)
 
-        with st.expander("❓ 取引ルール・計算方式の解説を開く"):
-            st.markdown("""
-            * **ルールの運用推移 (青線):** 設定した「目標利確ライン」と「損切りライン」を越える変動を制限（カット）し、リスク管理を行った場合の資産推移です。
-            * **ガチホ（そのまま保有） (点線):** 利確や損切りを行わずに、対象期間の最初に買ったまま保有し続けた場合の実際の株価推移（トータルリターン）です。
-            * **プロフィットファクター (PF):** `総利益 ÷ 総損失` で算出され、1.5以上で「優良なトレードルール」と判定されます。
-            """)
+            labels = [
+                d.strftime("%Y/%m" if "中長期" in horizon_mode else "%m/%d")
+                for d in sub_hist.index
+            ]
+            daily_returns_strategy = clipped_changes
+
+            final_value = portfolio_values[-1]
+            total_return_pct = (
+                (final_value - initial_capital) / initial_capital
+            ) * 100
+
+            trades = daily_returns_strategy[daily_returns_strategy != 0]
+            win_trades = trades[trades > 0]
+            loss_trades = trades[trades < 0]
+
+            win_count = len(win_trades)
+            loss_count = len(loss_trades)
+            total_trades = win_count + loss_count
+            win_rate = (
+                (win_count / total_trades * 100) if total_trades > 0 else 0
+            )
+
+            total_profit = np.sum(win_trades) if win_count > 0 else 0
+            total_loss = np.abs(np.sum(loss_trades)) if loss_count > 0 else 1e-6
+            profit_factor = total_profit / total_loss if total_loss > 0 else 0.0
+
+            st.markdown("---")
+
+            k1, k2, k3, k4 = st.columns(4)
+            with k1:
+                st.metric(
+                    "最終資産額",
+                    f"¥{final_value:,.0f}",
+                    f"{total_return_pct:+.1f}%",
+                )
+            with k2:
+                st.metric(
+                    "勝率",
+                    f"{win_rate:.1f}%",
+                    f"{win_count}勝 {loss_count}敗",
+                    delta_color="off",
+                )
+            with k3:
+                pf_status = (
+                    "優良 (>1.5)" if profit_factor >= 1.5 else "要改善 (<1.5)"
+                )
+                st.metric(
+                    "プロフィットファクター",
+                    f"{profit_factor:.2f}",
+                    pf_status,
+                    delta_color="normal" if profit_factor >= 1.5 else "inverse",
+                )
+            with k4:
+                st.metric(
+                    "検証ステップ数",
+                    f"{total_trades} 回",
+                    f"モード: {horizon_mode.split(' ')[0]}",
+                    delta_color="off",
+                )
+
+            st.markdown("---")
+
+            st.subheader(
+                f"📊 {target_name} ({target_ticker}) パフォーマンス推移"
+            )
+            fig_sim = go.Figure()
+            fig_sim.add_trace(
+                go.Scatter(
+                    x=labels,
+                    y=portfolio_values,
+                    mode="lines+markers",
+                    name="ルールの運用推移",
+                    line=dict(color="#2563EB", width=3),
+                    fill="tonexty",
+                    fillcolor="rgba(37, 99, 235, 0.08)",
+                )
+            )
+            fig_sim.add_trace(
+                go.Scatter(
+                    x=labels,
+                    y=benchmark_values,
+                    mode="lines+markers",
+                    name="ガチホ（そのまま保有）の場合",
+                    line=dict(color="#64748B", width=2, dash="dot"),
+                )
+            )
+            fig_sim.update_layout(
+                xaxis_title="日付 / 経過期間",
+                yaxis_title="資産額 (JPY)",
+                yaxis=dict(tickformat=",.0f"),
+                hovermode="x unified",
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
+                ),
+                margin=dict(l=20, r=20, t=40, b=20),
+                height=420,
+            )
+            st.plotly_chart(fig_sim, use_container_width=True)
+
+            with st.expander("❓ 取引ルール・計算方式の解説を開く"):
+                st.markdown("""
+                * **ルールの運用推移 (青線):** 設定した「目標利確ライン」と「損切りライン」を越える変動を制限（カット）し、リスク管理を行った場合の資産推移です。
+                * **ガチホ（そのまま保有） (点線):** 利確や損切りを行わずに、対象期間の最初に買ったまま保有し続けた場合の実際の株価推移（トータルリターン）です。
+                * **プロフィットファクター (PF):** `総利益 ÷ 総損失` で算出され、1.5以上で「優良なトレードルール」と判定されます。
+                """)
+        else:
+            st.error("十分な期間のデータが取得できませんでした。")
     else:
         st.error("データの取得に失敗しました。")
