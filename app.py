@@ -438,8 +438,74 @@ if menu_selection == "📋 スクリーニング対象銘柄一覧":
                     filtered_df["判定"] == selected_status
                 ]
 
-        st.dataframe(filtered_df, use_container_width=True)
+        # ---------------------------------------------------------
+        # 🆕 ウォッチリスト追加用のチェック欄機能（st.data_editor）
+        # ---------------------------------------------------------
+        display_df = filtered_df.copy()
+        
+        # チェック欄用の列を先頭に追加
+        display_df.insert(0, "⭐ 追加", False)
+
+        st.caption("💡 ウォッチリストに追加したい銘柄の「⭐ 追加」欄にチェックを入れ、下のボタンを押してください。")
+
+        # インタラクティブなデータエディタを表示
+        edited_df = st.data_editor(
+            display_df,
+            column_config={
+                "⭐ 追加": st.column_config.CheckboxColumn(
+                    "⭐ 追加",
+                    help="チェックを入れた銘柄をマイ・ウォッチリストへ自動追加します",
+                    default=False,
+                )
+            },
+            disabled=[col for col in display_df.columns if col != "⭐ 追加"],
+            hide_index=True,
+            use_container_width=True,
+            key="screener_table_editor",
+        )
+
         st.caption(f"該当銘柄数: {len(filtered_df)} 件")
+
+        # チェックされた銘柄をウォッチリストに追加するアクションボタン
+        selected_rows = edited_df[edited_df["⭐ 追加"] == True]
+        
+        col_btn1, col_btn2 = st.columns([3, 7])
+        with col_btn1:
+            if st.button("⭐ チェックした銘柄をウォッチリストに追加", type="primary", disabled=selected_rows.empty):
+                added_count = 0
+                already_exists_count = 0
+                existing_tickers = [item["Ticker"] for item in st.session_state.watchlist]
+
+                for _, r in selected_rows.iterrows():
+                    raw_ticker = str(r.get("Ticker", r.get("銘柄コード", ""))).strip().upper()
+                    
+                    # 東証形式 (.T) の補正
+                    if raw_ticker and not raw_ticker.endswith(".T") and raw_ticker.isdigit():
+                        formatted_ticker = f"{raw_ticker}.T"
+                    else:
+                        formatted_ticker = raw_ticker
+
+                    ticker_name = str(r.get("銘柄名", formatted_ticker)).strip()
+
+                    if formatted_ticker in existing_tickers:
+                        already_exists_count += 1
+                    else:
+                        st.session_state.watchlist.append({
+                            "Ticker": formatted_ticker,
+                            "銘柄名": ticker_name if ticker_name else formatted_ticker,
+                            "メモ": "スクリーニング一覧から自動追加",
+                        })
+                        existing_tickers.append(formatted_ticker)
+                        added_count += 1
+
+                if added_count > 0:
+                    st.success(f"✅ {added_count} 件の銘柄をマイ・ウォッチリストに追加しました！")
+                    if already_exists_count > 0:
+                        st.info(f"ℹ️ {already_exists_count} 件は既に登録済みのためスキップされました。")
+                    safe_rerun()
+                elif already_exists_count > 0:
+                    st.warning("⚠️ 選択した銘柄はすべて既にウォッチリストに登録されています。")
+
     else:
         st.warning("表示できるデータがありません。")
 
